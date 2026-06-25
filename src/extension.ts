@@ -5,7 +5,7 @@ import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { McpBridge } from './mcpBridge';
-import { D365CodeActionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
+import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
@@ -57,8 +57,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.languages.registerCodeActionsProvider(
             docSelector,
-            new D365CodeActionProvider(connectionManager, client),
+            new D365CodeActionProvider(connectionManager),
             { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+        ),
+        vscode.languages.registerCompletionItemProvider(
+            docSelector,
+            new D365CompletionProvider(connectionManager),
         ),
     );
 
