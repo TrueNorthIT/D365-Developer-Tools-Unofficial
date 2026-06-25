@@ -1,74 +1,59 @@
 #!/usr/bin/env node
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { ConfidentialClientApplication } from '@azure/msal-node';
 import { z } from 'zod';
 
 import type { EntityDefinition, AttributeDefinition, OptionValue } from './dataverseClient';
 import { generateInterface, generateEnum, OPTION_SET_TYPES } from './interfaceGenerator';
+import type { BridgeState } from './mcpBridge';
 
-// ── Configuration ────────────────────────────────────────────────────────────
+// ── Bridge connection ────────────────────────────────────────────────────────
+// The VS Code extension writes .d365-mcp-bridge (port + nonce) when connected.
+// We read it on every request so tokens are always fresh via the extension's MSAL session.
 
-const D365_URL           = process.env['D365_URL']?.trim().replace(/\/$/, '');
-const D365_TENANT_ID     = process.env['D365_TENANT_ID']?.trim();
-const D365_CLIENT_ID     = process.env['D365_CLIENT_ID']?.trim();
-const D365_CLIENT_SECRET = process.env['D365_CLIENT_SECRET']?.trim();
+const BRIDGE_FILE = process.env['D365_BRIDGE_FILE']
+    ?? path.join(__dirname, '..', '.d365-mcp-bridge');
 
-if (!D365_URL || !D365_TENANT_ID || !D365_CLIENT_ID || !D365_CLIENT_SECRET) {
-    process.stderr.write(
-        'D365 MCP Server: Missing required environment variables.\n' +
-        'Required: D365_URL, D365_TENANT_ID, D365_CLIENT_ID, D365_CLIENT_SECRET\n',
-    );
-    process.exit(1);
-}
-
-// ── Authentication ───────────────────────────────────────────────────────────
-
-let cachedToken: { token: string; expiresAt: number } | undefined;
-
-async function getAccessToken(): Promise<string> {
-    const now = Date.now();
-    if (cachedToken && cachedToken.expiresAt > now + 60_000) {
-        return cachedToken.token;
+async function getCredentials(): Promise<{ token: string; environmentUrl: string }> {
+    let state: BridgeState;
+    try {
+        state = JSON.parse(fs.readFileSync(BRIDGE_FILE, 'utf8')) as BridgeState;
+    } catch {
+        throw new Error(
+            'D365 extension is not connected. Open VS Code, connect to a Dataverse environment ' +
+            'via the D365 sidebar, then retry.\n' +
+            `(Bridge file expected at: ${BRIDGE_FILE})`,
+        );
     }
 
-    const app = new ConfidentialClientApplication({
-        auth: {
-            clientId: D365_CLIENT_ID!,
-            clientSecret: D365_CLIENT_SECRET!,
-            authority: `https://login.microsoftonline.com/${D365_TENANT_ID}`,
-        },
+    const response = await fetch(`http://127.0.0.1:${state.port}/token`, {
+        headers: { Authorization: `Bearer ${state.nonce}` },
     });
 
-    const result = await app.acquireTokenByClientCredential({
-        scopes: [`${D365_URL}/.default`],
-    });
+    if (!response.ok) {
+        throw new Error(`Bridge returned ${response.status}: ${await response.text()}`);
+    }
 
-    if (!result?.accessToken) { throw new Error('Failed to acquire Dataverse access token'); }
-
-    cachedToken = {
-        token: result.accessToken,
-        expiresAt: result.expiresOn?.getTime() ?? (now + 3_600_000),
-    };
-    return cachedToken.token;
+    return response.json() as Promise<{ token: string; environmentUrl: string }>;
 }
 
 // ── Dataverse HTTP helpers ───────────────────────────────────────────────────
 
 interface ODataPage<T> { value: T[]; '@odata.nextLink'?: string; }
 
-async function dvHeaders(): Promise<Record<string, string>> {
-    return {
-        Authorization: `Bearer ${await getAccessToken()}`,
-        'OData-MaxVersion': '4.0',
-        'OData-Version': '4.0',
-        Accept: 'application/json',
-    };
-}
-
 async function dvFetch<T>(path: string): Promise<T> {
-    const response = await fetch(`${D365_URL}/api/data/v9.2/${path}`, { headers: await dvHeaders() });
+    const { token, environmentUrl } = await getCredentials();
+    const response = await fetch(`${environmentUrl}/api/data/v9.2/${path}`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'OData-MaxVersion': '4.0',
+            'OData-Version': '4.0',
+            Accept: 'application/json',
+        },
+    });
     if (!response.ok) {
         const body = await response.text().catch(() => '');
         throw new Error(`Dataverse ${response.status}: ${body || response.statusText}`);
@@ -76,11 +61,19 @@ async function dvFetch<T>(path: string): Promise<T> {
     return response.json() as Promise<T>;
 }
 
-async function dvFetchAll<T>(path: string): Promise<T[]> {
+async function dvFetchAll<T>(resourcePath: string): Promise<T[]> {
     const results: T[] = [];
-    let url: string | undefined = `${D365_URL}/api/data/v9.2/${path}`;
+    const { token, environmentUrl } = await getCredentials();
+
+    const headers = {
+        Authorization: `Bearer ${token}`,
+        'OData-MaxVersion': '4.0',
+        'OData-Version': '4.0',
+        Accept: 'application/json',
+    };
+
+    let url: string | undefined = `${environmentUrl}/api/data/v9.2/${resourcePath}`;
     while (url) {
-        const headers = await dvHeaders();
         const response = await fetch(url, { headers });
         if (!response.ok) {
             const body = await response.text().catch(() => '');
@@ -99,35 +92,13 @@ interface DvLabel {
     UserLocalizedLabel?: { Label: string };
     LocalizedLabels: Array<{ Label: string; LanguageCode: number }>;
 }
-
-interface RawEntity {
-    MetadataId: string;
-    LogicalName: string;
-    SchemaName: string;
-    DisplayName: DvLabel;
-    IsCustomEntity: boolean;
-}
-
-interface RawAttribute {
-    LogicalName: string;
-    SchemaName: string;
-    DisplayName: DvLabel;
-    AttributeType: string;
-    IsPrimaryId: boolean;
-    IsPrimaryName: boolean;
-}
-
-interface RawSolution {
-    solutionid: string;
-    uniquename: string;
-    friendlyname: string;
-}
-
+interface RawEntity    { MetadataId: string; LogicalName: string; SchemaName: string; DisplayName: DvLabel; IsCustomEntity: boolean; }
+interface RawAttribute { LogicalName: string; SchemaName: string; DisplayName: DvLabel; AttributeType: string; IsPrimaryId: boolean; IsPrimaryName: boolean; }
+interface RawSolution  { solutionid: string; uniquename: string; friendlyname: string; }
 interface RawSolutionComponent { objectid: string; }
-
 interface RawOptionItem { Value: number; Label: DvLabel; }
 interface RawOptionSetData {
-    OptionSet?: { Options: RawOptionItem[] };
+    OptionSet?:       { Options: RawOptionItem[] };
     GlobalOptionSet?: { Options: RawOptionItem[] };
 }
 
@@ -154,11 +125,11 @@ async function fetchEntities(): Promise<EntityDefinition[]> {
         'EntityDefinitions?$select=MetadataId,LogicalName,SchemaName,DisplayName,IsCustomEntity',
     );
     return raw.map(e => ({
-        metadataId: e.MetadataId,
+        metadataId:  e.MetadataId,
         logicalName: e.LogicalName,
-        schemaName: e.SchemaName,
+        schemaName:  e.SchemaName,
         displayName: extractLabel(e.DisplayName) || e.SchemaName,
-        isCustom: e.IsCustomEntity,
+        isCustom:    e.IsCustomEntity,
     })).sort((a, b) => a.logicalName.localeCompare(b.logicalName));
 }
 
@@ -168,11 +139,11 @@ async function fetchAttributes(entityLogicalName: string): Promise<AttributeDefi
         `?$select=LogicalName,SchemaName,DisplayName,AttributeType,IsPrimaryId,IsPrimaryName`,
     );
     return raw.map(a => ({
-        logicalName: a.LogicalName,
-        schemaName: a.SchemaName,
-        displayName: extractLabel(a.DisplayName) || a.SchemaName,
+        logicalName:   a.LogicalName,
+        schemaName:    a.SchemaName,
+        displayName:   extractLabel(a.DisplayName) || a.SchemaName,
         attributeType: a.AttributeType,
-        isPrimaryId: a.IsPrimaryId,
+        isPrimaryId:   a.IsPrimaryId,
         isPrimaryName: a.IsPrimaryName,
     })).sort((a, b) => a.logicalName.localeCompare(b.logicalName));
 }
@@ -180,7 +151,6 @@ async function fetchAttributes(entityLogicalName: string): Promise<AttributeDefi
 async function fetchOptionValues(entityLogicalName: string, attributeLogicalName: string, attributeType: string): Promise<OptionValue[]> {
     const cast = OPTION_SET_CAST[attributeType];
     if (!cast) { throw new Error(`${attributeType} is not a supported option-set type`); }
-
     const data = await dvFetch<RawOptionSetData>(
         `EntityDefinitions(LogicalName='${entityLogicalName}')` +
         `/Attributes(LogicalName='${attributeLogicalName}')/${cast}` +
@@ -204,8 +174,6 @@ async function fetchSolutionEntityIds(solutionId: string): Promise<Set<string>> 
 // ── MCP Server ───────────────────────────────────────────────────────────────
 
 const server = new McpServer({ name: 'd365-dataverse-tools', version: '0.0.1' });
-
-// list_entities ──────────────────────────────────────────────────────────────
 
 server.tool(
     'list_entities',
@@ -237,8 +205,6 @@ server.tool(
     },
 );
 
-// get_entity_attributes ──────────────────────────────────────────────────────
-
 server.tool(
     'get_entity_attributes',
     'Get all attributes (fields) for a Dataverse entity, with their types and flags.',
@@ -257,8 +223,6 @@ server.tool(
     },
 );
 
-// get_option_values ──────────────────────────────────────────────────────────
-
 server.tool(
     'get_option_values',
     'Get the option set values for a Picklist, State, or Status attribute.',
@@ -273,8 +237,6 @@ server.tool(
         return { content: [{ type: 'text' as const, text }] };
     },
 );
-
-// generate_interface ─────────────────────────────────────────────────────────
 
 server.tool(
     'generate_interface',
@@ -291,7 +253,7 @@ server.tool(
             attrs = attrs.filter(a => wanted.has(a.logicalName));
         }
 
-        const enumNames = new Map<string, string>();
+        const enumNames  = new Map<string, string>();
         const enumBlocks: string[] = [];
 
         await Promise.all(
@@ -302,13 +264,8 @@ server.tool(
                         const options = await fetchOptionValues(entity_logical_name, a.logicalName, a.attributeType);
                         const block   = generateEnum(a.logicalName, a.displayName, options);
                         const name    = block.match(/export const enum (\w+)/)?.[1];
-                        if (name) {
-                            enumBlocks.push(block);
-                            enumNames.set(a.logicalName, name);
-                        }
-                    } catch {
-                        // fall back to number type for this field
-                    }
+                        if (name) { enumBlocks.push(block); enumNames.set(a.logicalName, name); }
+                    } catch { /* fall back to number type */ }
                 }),
         );
 
@@ -318,8 +275,6 @@ server.tool(
     },
 );
 
-// generate_enum ──────────────────────────────────────────────────────────────
-
 server.tool(
     'generate_enum',
     'Generate a TypeScript const enum for a Picklist, State, or Status attribute.',
@@ -327,7 +282,7 @@ server.tool(
         entity_logical_name:    z.string().describe('Entity logical name'),
         attribute_logical_name: z.string().describe('Attribute logical name'),
         attribute_type:         z.enum(['Picklist', 'State', 'Status']).describe('Attribute type'),
-        display_name:           z.string().optional().describe('Display name used to name the enum (falls back to logical name)'),
+        display_name:           z.string().optional().describe('Display name for the enum (falls back to logical name)'),
     },
     async ({ entity_logical_name, attribute_logical_name, attribute_type, display_name }) => {
         const options = await fetchOptionValues(entity_logical_name, attribute_logical_name, attribute_type);

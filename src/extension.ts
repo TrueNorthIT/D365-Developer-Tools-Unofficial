@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
+import { McpBridge } from './mcpBridge';
 
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
@@ -12,6 +13,16 @@ export function activate(context: vscode.ExtensionContext) {
     connectionManager.onDidChangeConnection(conn => {
         void vscode.commands.executeCommand('setContext', 'd365.connected', !!conn);
     });
+
+    // MCP bridge — lets Claude piggyback on the active connection for schema queries
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+        const bridge = new McpBridge(connectionManager, workspaceRoot);
+        connectionManager.onDidChangeConnection(conn => {
+            if (conn) { bridge.start(); } else { bridge.stop(); }
+        });
+        context.subscriptions.push(bridge);
+    }
 
     // Silently restore the last connection for this workspace
     void connectionManager.tryRestoreConnection();

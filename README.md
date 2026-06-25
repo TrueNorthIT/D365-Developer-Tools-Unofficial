@@ -111,33 +111,31 @@ The extension ships an MCP (Model Context Protocol) server so Claude can query y
 
 ### Setup
 
-The MCP server authenticates with **client credentials** (app-only). You need an Azure AD app registration with a client secret and Dataverse API access.
+The MCP server piggybacks on the VS Code extension's active connection — no separate credentials needed. Connect to your environment in the sidebar first, then Claude can use the same session.
 
-1. **Build the server** — it is compiled alongside the extension:
+1. **Build the server** — compiled automatically alongside the extension:
    ```bash
    npm run compile
    ```
 
-2. **Create `.mcp.json`** in the workspace root (copy from `.mcp.json.example` and fill in your values):
+2. **Create `.mcp.json`** in the workspace root (copy from `.mcp.json.example`):
    ```json
    {
      "mcpServers": {
        "d365": {
          "command": "node",
-         "args": ["${workspaceFolder}/out/mcp-server.js"],
-         "env": {
-           "D365_URL": "https://yourorg.crm11.dynamics.com",
-           "D365_TENANT_ID": "your-tenant-id",
-           "D365_CLIENT_ID": "your-client-id",
-           "D365_CLIENT_SECRET": "your-client-secret"
-         }
+         "args": ["${workspaceFolder}/out/mcp-server.js"]
        }
      }
    }
    ```
-   `.mcp.json` is gitignored — credentials never leave your machine.
+   No credentials in the file — the extension handles all authentication.
 
-3. **Restart Claude Code** — it picks up `.mcp.json` automatically. Run `/mcp` to verify the `d365` server is connected.
+3. **Connect in VS Code** — use the Connect button in the D365 sidebar. The extension starts a local bridge server that the MCP server reads tokens from.
+
+4. **Restart Claude Code** — it picks up `.mcp.json` automatically. Run `/mcp` to verify the `d365` server is connected.
+
+If Claude reports the extension is not connected, check the D365 sidebar — it needs an active connection before the bridge is available.
 
 ### Example usage
 
