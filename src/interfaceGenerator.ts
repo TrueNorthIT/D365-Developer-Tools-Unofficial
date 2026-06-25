@@ -25,20 +25,24 @@ export function generateInterface(
     ];
 
     for (const attr of attributes) {
+        const isLookup = attr.attributeType === 'Lookup' || attr.attributeType === 'Customer' || attr.attributeType === 'Owner';
+        const fieldName = isLookup ? `_${attr.logicalName}_value` : attr.logicalName;
+
         const notes: string[] = [];
         if (attr.isPrimaryId)   { notes.push('Primary ID'); }
         if (attr.isPrimaryName) { notes.push('Primary Name'); }
         if (attr.attributeType === 'DateTime') { notes.push('ISO 8601 string'); }
-        if (attr.attributeType === 'Lookup' || attr.attributeType === 'Customer' || attr.attributeType === 'Owner') {
-            notes.push('lookup — field appears as _logicalname_value in API responses');
-        }
 
         if (notes.length) {
             lines.push(`    /** ${notes.join(' | ')} */`);
         }
 
         const enumName = OPTION_SET_TYPES.has(attr.attributeType) ? enumNames?.get(attr.logicalName) : undefined;
-        lines.push(`    ${attr.logicalName}: ${enumName ?? mapType(attr.attributeType)};`);
+        lines.push(`    ${fieldName}: ${enumName ?? mapType(attr.attributeType)};`);
+
+        if (isLookup) {
+            lines.push(`    '${fieldName}@OData.Community.Display.V1.FormattedValue'?: string;`);
+        }
     }
 
     lines.push('}');
