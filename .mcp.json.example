@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "d365": {
+      "command": "node",
+      "args": ["${workspaceFolder}/out/mcp-server.js"],
+      "env": {
+        "D365_URL": "https://yourorg.crm11.dynamics.com",
+        "D365_TENANT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "D365_CLIENT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "D365_CLIENT_SECRET": "your-client-secret"
+      }
+    }
+  }
+}

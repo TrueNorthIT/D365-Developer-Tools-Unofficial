@@ -65,7 +65,10 @@
         },
         "d365.authMode": {
           "type": "string",
-          "enum": ["user", "clientCredentials"],
+          "enum": [
+            "user",
+            "clientCredentials"
+          ],
           "enumDescriptions": [
             "Sign in with your Microsoft account (recommended for interactive use)",
             "App-only authentication using a client ID and secret"
@@ -137,6 +140,8 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
-    "@azure/msal-node": "^3.8.10"
+    "@azure/msal-node": "^3.8.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }

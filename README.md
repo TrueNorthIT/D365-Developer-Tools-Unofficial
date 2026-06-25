@@ -95,6 +95,58 @@ The sidebar title bar shows context-sensitive actions:
 | `d365.clientId` | Azure AD application (client) ID | — |
 | `d365.authMode` | `user` or `clientCredentials`. Leave blank to be prompted each time | — |
 
+## Claude / AI Integration (MCP Server)
+
+The extension ships an MCP (Model Context Protocol) server so Claude can query your live Dataverse schema while helping you write TypeScript scripts. When the server is running, Claude can look up entity shapes, field types, and option set values in real time — no copy-pasting schema details into the chat.
+
+### Available tools
+
+| Tool | Description |
+|---|---|
+| `list_entities` | List all entities, optionally filtered to a solution |
+| `get_entity_attributes` | Get all fields for an entity with their types |
+| `get_option_values` | Get the numeric values and labels for a Picklist, State, or Status field |
+| `generate_interface` | Generate a TypeScript interface (with auto-enums for option set fields) |
+| `generate_enum` | Generate a `const enum` for a single option set field |
+
+### Setup
+
+The MCP server authenticates with **client credentials** (app-only). You need an Azure AD app registration with a client secret and Dataverse API access.
+
+1. **Build the server** — it is compiled alongside the extension:
+   ```bash
+   npm run compile
+   ```
+
+2. **Create `.mcp.json`** in the workspace root (copy from `.mcp.json.example` and fill in your values):
+   ```json
+   {
+     "mcpServers": {
+       "d365": {
+         "command": "node",
+         "args": ["${workspaceFolder}/out/mcp-server.js"],
+         "env": {
+           "D365_URL": "https://yourorg.crm11.dynamics.com",
+           "D365_TENANT_ID": "your-tenant-id",
+           "D365_CLIENT_ID": "your-client-id",
+           "D365_CLIENT_SECRET": "your-client-secret"
+         }
+       }
+     }
+   }
+   ```
+   `.mcp.json` is gitignored — credentials never leave your machine.
+
+3. **Restart Claude Code** — it picks up `.mcp.json` automatically. Run `/mcp` to verify the `d365` server is connected.
+
+### Example usage
+
+Once connected, Claude can answer questions like:
+
+> *"Generate a TypeScript interface for the `lead` entity, only including the name, status, owner, and created date fields."*
+
+Claude will call `get_entity_attributes` and `generate_interface` against your live environment and return ready-to-use code.
+
 ## Requirements
 
 - VS Code 1.85 or later
