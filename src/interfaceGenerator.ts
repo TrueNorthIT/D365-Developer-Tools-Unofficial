@@ -41,6 +41,7 @@ export function generateInterface(
         lines.push(`    ${fieldName}: ${enumName ?? mapType(attr.attributeType)};`);
 
         if (isLookup) {
+            lines.push(`    /** Display name of the related record. Only present when annotations are requested: Prefer: odata.include-annotations="OData.Community.Display.V1.FormattedValue" */`);
             lines.push(`    '${fieldName}@OData.Community.Display.V1.FormattedValue'?: string;`);
         }
     }
