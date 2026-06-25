@@ -19,8 +19,8 @@ Right-click an entity in the explorer (or run **D365: Generate TypeScript Interf
 
 You'll be prompted to select which fields to include. The output is opened directly in the editor as a new TypeScript file.
 
-- Fields are typed appropriately (`string`, `number`, `boolean`, `string | null` for lookups)
-- Lookup fields include a JSDoc note that the Web API returns them as `_logicalname_value`
+- Fields are typed appropriately (`string`, `number`, `boolean`)
+- Lookup / Customer / Owner fields use the actual Web API key (`_logicalname_value`) with an optional companion annotation field for the display name
 - DateTime fields are typed `string` with an ISO 8601 note
 - Picklist / State / Status fields automatically have their option values fetched and a matching `const enum` generated alongside the interface
 
@@ -39,8 +39,8 @@ export interface Lead {
     /** Primary Name */
     fullname: string;
     statuscode: LeadStatusCode;
-    /** lookup — field appears as _logicalname_value in API responses */
     _ownerid_value: string | null;
+    '_ownerid_value@OData.Community.Display.V1.FormattedValue'?: string;
 }
 ```
 
