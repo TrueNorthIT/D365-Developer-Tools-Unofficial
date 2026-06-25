@@ -5,6 +5,7 @@ import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { McpBridge } from './mcpBridge';
+import { D365CodeActionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
@@ -45,6 +46,23 @@ export function activate(context: vscode.ExtensionContext) {
             { webviewOptions: { retainContextWhenHidden: true } },
         ),
     );
+
+    const docSelector = [
+        { language: 'typescript' },
+        { language: 'javascript' },
+        { language: 'typescriptreact' },
+        { language: 'javascriptreact' },
+    ];
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeActionsProvider(
+            docSelector,
+            new D365CodeActionProvider(connectionManager, client),
+            { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+        ),
+    );
+
+    registerInsertInterfaceCommand(context, connectionManager, client);
 
     context.subscriptions.push(
         vscode.commands.registerCommand('d365.connect', () => connectionManager.connect()),
