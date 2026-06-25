@@ -18,13 +18,19 @@ export function activate(context: vscode.ExtensionContext) {
 
     // MCP bridge — lets Claude piggyback on the active connection for schema queries
     const bridge = new McpBridge(connectionManager);
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
     connectionManager.onDidChangeConnection(conn => {
-        if (conn) { bridge.start(); } else { bridge.stop(); }
+        if (conn) {
+            bridge.start();
+            if (workspaceRoot) { ensureMcpJson(workspaceRoot, context.extensionPath); }
+        } else {
+            bridge.stop();
+        }
     });
     context.subscriptions.push(bridge);
 
-    // Auto-create .mcp.json in the workspace if Claude Code is installed
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // Also check on activation (covers the case where .mcp.json was deleted and re-opened)
     if (workspaceRoot) {
         ensureMcpJson(workspaceRoot, context.extensionPath);
     }
