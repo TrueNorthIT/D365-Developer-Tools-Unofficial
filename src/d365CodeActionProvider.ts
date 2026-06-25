@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { AttributeDefinition } from './dataverseClient';
 import type { ConnectionManager } from './connectionManager';
 import type { DataverseClient } from './dataverseClient';
 import { generateInterface, generateEnum, toPascalCase, OPTION_SET_TYPES } from './interfaceGenerator';
@@ -19,20 +20,30 @@ export class D365CodeActionProvider implements vscode.CodeActionProvider {
 
         const entityLogicalName = match[2];
         const connected         = this.connectionManager.isConnected;
+        const suffix            = connected ? '' : ' (connect first)';
 
-        const action = new vscode.CodeAction(
-            connected
-                ? `D365: Generate interface for '${entityLogicalName}'`
-                : `D365: Generate interface for '${entityLogicalName}' (connect first)`,
+        const allFields = new vscode.CodeAction(
+            `D365: Generate interface for '${entityLogicalName}'${suffix}`,
             vscode.CodeActionKind.QuickFix,
         );
-        action.command = {
+        allFields.command = {
             command:   'd365.codeAction.insertInterface',
             title:     'Generate D365 Interface',
-            arguments: [document.uri, line.lineNumber, entityLogicalName],
+            arguments: [document.uri, line.lineNumber, entityLogicalName, false],
         };
-        action.isPreferred = connected;
-        return [action];
+        allFields.isPreferred = connected;
+
+        const selectFields = new vscode.CodeAction(
+            `D365: Generate interface for '${entityLogicalName}' (select fields…)${suffix}`,
+            vscode.CodeActionKind.QuickFix,
+        );
+        selectFields.command = {
+            command:   'd365.codeAction.insertInterface',
+            title:     'Generate D365 Interface (select fields)',
+            arguments: [document.uri, line.lineNumber, entityLogicalName, true],
+        };
+
+        return [allFields, selectFields];
     }
 }
 
@@ -44,21 +55,48 @@ export function registerInsertInterfaceCommand(
     context.subscriptions.push(
         vscode.commands.registerCommand(
             'd365.codeAction.insertInterface',
-            async (uri: vscode.Uri, lineNumber: number, entityLogicalName: string) => {
+            async (uri: vscode.Uri, lineNumber: number, entityLogicalName: string, selectFields: boolean) => {
                 if (!connectionManager.isConnected) {
                     vscode.window.showErrorMessage('D365: Connect to an environment before generating interfaces.');
                     return;
                 }
 
-                let attributes;
+                let allAttributes: AttributeDefinition[];
                 try {
-                    attributes = await vscode.window.withProgress(
+                    allAttributes = await vscode.window.withProgress(
                         { location: vscode.ProgressLocation.Notification, title: `D365: Loading '${entityLogicalName}'…`, cancellable: false },
                         () => client.getAttributes(entityLogicalName),
                     );
                 } catch {
                     vscode.window.showErrorMessage(`D365: Entity '${entityLogicalName}' not found or failed to load.`);
                     return;
+                }
+
+                let attributes = allAttributes;
+
+                if (selectFields) {
+                    const picks = await vscode.window.showQuickPick(
+                        allAttributes.map(a => ({
+                            label:       a.displayName || a.logicalName,
+                            description: a.logicalName,
+                            detail:      [
+                                a.attributeType,
+                                a.isPrimaryId   && 'Primary ID',
+                                a.isPrimaryName && 'Primary Name',
+                            ].filter(Boolean).join('  ·  '),
+                            picked:    a.isPrimaryId || a.isPrimaryName,
+                            attribute: a,
+                        })),
+                        {
+                            title:             `Select fields — ${entityLogicalName}`,
+                            placeHolder:       'Choose fields to include…',
+                            canPickMany:       true,
+                            matchOnDescription: true,
+                            matchOnDetail:      true,
+                        },
+                    );
+                    if (!picks?.length) { return; }
+                    attributes = picks.map(p => p.attribute);
                 }
 
                 const optionSetAttrs = attributes.filter(a => OPTION_SET_TYPES.has(a.attributeType));
@@ -85,7 +123,7 @@ export function registerInsertInterfaceCommand(
                     generateInterface(entityLogicalName, entityLogicalName, attributes, enumNames),
                 ].join('\n\n');
 
-                // Preserve the indentation of the trigger comment
+                // Re-read the document at insertion time and preserve indentation
                 const document = await vscode.workspace.openTextDocument(uri);
                 const line     = document.lineAt(lineNumber);
                 const indent   = TRIGGER_RE.exec(line.text)?.[1] ?? '';
