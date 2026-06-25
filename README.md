@@ -1,6 +1,6 @@
 # D365 Dataverse Tools
 
-A VS Code extension for TypeScript development against Dynamics 365 / Dataverse. Browse entities and attributes, generate typed interfaces, and produce `const enum`s for option sets — all without leaving the editor.
+A VS Code extension for TypeScript development against Dynamics 365 / Dataverse. Browse entities and attributes, generate typed interfaces and `const enum`s for option sets, and get IntelliSense-driven schema generation — all without leaving the editor.
 
 ## Features
 
@@ -56,11 +56,34 @@ export const enum LeadStatusCode {
 }
 ```
 
+### IntelliSense Integration
+
+Generate interfaces directly in your TypeScript files without touching the sidebar.
+
+**Option 1 — type `d365`**
+
+Start typing `d365` anywhere in a `.ts` or `.js` file and two items appear in the autocomplete dropdown:
+
+- **D365: Generate interface…** — prompts for an entity, then inserts all fields
+- **D365: Generate interface (select fields…)** — prompts for an entity, then lets you pick which fields to include
+
+**Option 2 — trigger comment**
+
+Write a trigger comment with the entity name already known, then use the lightbulb (`Ctrl+.`):
+
+```typescript
+// @d365 lead
+```
+
+The same two options appear. Accepting either replaces the comment with the generated code in-place.
+
+Both paths fetch option set values automatically and produce `const enum`s alongside the interface.
+
 ### Connection Management
 
 - **Connect** — prompts for environment URL and authentication method, then validates connectivity via WhoAmI
 - **Disconnect** — clears the stored session
-- **Auto-restore** — the last connection is silently restored when the workspace opens; the sidebar shows a spinner while this is in progress and a Connect prompt if restore fails
+- **Auto-restore** — the extension activates in the background when VS Code opens and silently restores the last connection; the sidebar shows a spinner while this is in progress and a reconnect prompt if it fails
 
 Authentication options:
 
