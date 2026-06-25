@@ -111,31 +111,15 @@ The extension ships an MCP (Model Context Protocol) server so Claude can query y
 
 ### Setup
 
-The MCP server piggybacks on the VS Code extension's active connection — no separate credentials needed. Connect to your environment in the sidebar first, then Claude can use the same session.
+No credentials or manual config needed — the MCP server uses your existing VS Code session.
 
-1. **Build the server** — compiled automatically alongside the extension:
-   ```bash
-   npm run compile
-   ```
+1. **Connect in the D365 sidebar** — authenticate as normal.
+2. **Restart Claude Code** — on first activation the extension detects Claude Code and writes `.mcp.json` automatically. A notification confirms when this happens.
+3. **Run `/mcp`** in Claude Code to confirm the `d365` server is listed as connected.
 
-2. **Create `.mcp.json`** in the workspace root (copy from `.mcp.json.example`):
-   ```json
-   {
-     "mcpServers": {
-       "d365": {
-         "command": "node",
-         "args": ["${workspaceFolder}/out/mcp-server.js"]
-       }
-     }
-   }
-   ```
-   No credentials in the file — the extension handles all authentication.
+That's it. The extension starts a local token-vending bridge (`~/.d365-mcp-bridge`) whenever you're connected; the MCP server reads from it so Claude always has a fresh token without storing any credentials.
 
-3. **Connect in VS Code** — use the Connect button in the D365 sidebar. The extension starts a local bridge server that the MCP server reads tokens from.
-
-4. **Restart Claude Code** — it picks up `.mcp.json` automatically. Run `/mcp` to verify the `d365` server is connected.
-
-If Claude reports the extension is not connected, check the D365 sidebar — it needs an active connection before the bridge is available.
+> If the `d365` server shows as disconnected in `/mcp`, make sure the D365 sidebar is connected in VS Code first.
 
 ### Example usage
 
