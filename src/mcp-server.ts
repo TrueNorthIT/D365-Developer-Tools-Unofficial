@@ -2,6 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -15,7 +16,7 @@ import type { BridgeState } from './mcpBridge';
 // We read it on every request so tokens are always fresh via the extension's MSAL session.
 
 const BRIDGE_FILE = process.env['D365_BRIDGE_FILE']
-    ?? path.join(__dirname, '..', '.d365-mcp-bridge');
+    ?? path.join(os.homedir(), '.d365-mcp-bridge');
 
 async function getCredentials(): Promise<{ token: string; environmentUrl: string }> {
     let state: BridgeState;

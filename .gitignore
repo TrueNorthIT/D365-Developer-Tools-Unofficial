@@ -2,4 +2,3 @@ out/
 node_modules/
 *.vsix
 .mcp.json
-.d365-mcp-bridge

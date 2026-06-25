@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
@@ -15,13 +17,16 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     // MCP bridge — lets Claude piggyback on the active connection for schema queries
+    const bridge = new McpBridge(connectionManager);
+    connectionManager.onDidChangeConnection(conn => {
+        if (conn) { bridge.start(); } else { bridge.stop(); }
+    });
+    context.subscriptions.push(bridge);
+
+    // Auto-create .mcp.json in the workspace if Claude Code is installed
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (workspaceRoot) {
-        const bridge = new McpBridge(connectionManager, workspaceRoot);
-        connectionManager.onDidChangeConnection(conn => {
-            if (conn) { bridge.start(); } else { bridge.stop(); }
-        });
-        context.subscriptions.push(bridge);
+        ensureMcpJson(workspaceRoot, context.extensionPath);
     }
 
     // Silently restore the last connection for this workspace
@@ -128,6 +133,31 @@ async function browseEntity(client: DataverseClient): Promise<void> {
             matchOnDescription: true,
             matchOnDetail: true,
         },
+    );
+}
+
+function ensureMcpJson(workspaceRoot: string, extensionPath: string): void {
+    if (!vscode.extensions.getExtension('anthropic.claude-code')) { return; }
+
+    const mcpJsonPath  = path.join(workspaceRoot, '.mcp.json');
+    const serverJsPath = path.join(extensionPath, 'out', 'mcp-server.js');
+
+    if (fs.existsSync(mcpJsonPath)) { return; }
+    if (!fs.existsSync(serverJsPath)) { return; }
+
+    const config = {
+        mcpServers: {
+            d365: {
+                command: 'node',
+                args: [serverJsPath],
+            },
+        },
+    };
+
+    fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+    vscode.window.showInformationMessage(
+        'D365: Created .mcp.json — restart Claude Code to enable Dataverse schema queries.',
     );
 }
 

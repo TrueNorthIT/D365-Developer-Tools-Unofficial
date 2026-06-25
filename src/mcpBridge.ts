@@ -2,6 +2,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as os from 'os';
 import type { ConnectionManager } from './connectionManager';
 
 export interface BridgeState {
@@ -11,14 +12,11 @@ export interface BridgeState {
 
 export class McpBridge {
     private server: http.Server | undefined;
-    readonly bridgeFile: string;
+    // Home-directory location so the MCP server can always find it
+    // regardless of which workspace is currently open in VS Code.
+    readonly bridgeFile = path.join(os.homedir(), '.d365-mcp-bridge');
 
-    constructor(
-        private readonly connectionManager: ConnectionManager,
-        workspaceRoot: string,
-    ) {
-        this.bridgeFile = path.join(workspaceRoot, '.d365-mcp-bridge');
-    }
+    constructor(private readonly connectionManager: ConnectionManager) {}
 
     start(): void {
         if (this.server) { return; }
