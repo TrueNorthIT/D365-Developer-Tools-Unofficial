@@ -254,21 +254,29 @@ server.tool(
             attrs = attrs.filter(a => wanted.has(a.logicalName));
         }
 
-        const enumNames  = new Map<string, string>();
-        const enumBlocks: string[] = [];
+        const enumNames = new Map<string, string>();
 
-        await Promise.all(
+        const enumResults = await Promise.all(
             attrs
                 .filter(a => OPTION_SET_TYPES.has(a.attributeType))
                 .map(async a => {
                     try {
                         const options = await fetchOptionValues(entity_logical_name, a.logicalName, a.attributeType);
-                        const block   = generateEnum(a.logicalName, a.displayName, options);
-                        const name    = block.match(/export const enum (\w+)/)?.[1];
-                        if (name) { enumBlocks.push(block); enumNames.set(a.logicalName, name); }
-                    } catch { /* fall back to number type */ }
+                        const block = generateEnum(a.logicalName, a.displayName, options);
+                        const name = block.match(/export const enum (\w+)/)?.[1];
+                        return name ? { logicalName: a.logicalName, name, block } : null;
+                    } catch {
+                        return null; // fall back to number type
+                    }
                 }),
         );
+
+        const enumBlocks: string[] = [];
+        for (const r of enumResults) {
+            if (!r) { continue; }
+            enumBlocks.push(r.block);
+            enumNames.set(r.logicalName, r.name);
+        }
 
         const interfaceBlock = generateInterface(entity_logical_name, entity_logical_name, attrs, enumNames);
         const text = [...enumBlocks, interfaceBlock].join('\n\n');
