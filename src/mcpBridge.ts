@@ -49,7 +49,7 @@ export class McpBridge {
             const addr = this.server!.address();
             if (!addr || typeof addr === 'string') { return; }
             const state: BridgeState = { port: addr.port, nonce };
-            fs.writeFileSync(this.bridgeFile, JSON.stringify(state), 'utf8');
+            fs.writeFileSync(this.bridgeFile, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
         });
     }
 
