@@ -1,6 +1,14 @@
 .vscode/**
 .vscode-test/**
+.claude/**
+scripts/**
 src/**
 .gitignore
+.vscodeignore
 tsconfig.json
 eslint.config.mjs
+.mcp.json.example
+.mcp.json
+**/*.map
+**/*.vsix
+package-lock.json
