@@ -1,4 +1,4 @@
-# D365 Dataverse Tools
+# D365 Developer Tools (Unofficial)
 
 A VS Code extension for TypeScript development against Dynamics 365 / Dataverse. Browse entities and attributes, generate typed interfaces and `const enum`s for option sets, and get IntelliSense-driven schema generation — all without leaving the editor.
 
