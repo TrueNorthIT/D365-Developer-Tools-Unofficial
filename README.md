@@ -155,6 +155,7 @@ Claude will call `get_entity_attributes` and `generate_interface` against your l
 ## Requirements
 
 - VS Code 1.85 or later
+- Node.js 18+ (required for the bundled MCP server when launched via `node`)
 - A Dataverse / Dynamics 365 environment
 - For user auth: an Azure AD application registered with Dataverse API permissions, or use the default Dataverse client ID
 - For client credentials: an Azure AD app registration with a client secret and appropriate Dataverse permissions
