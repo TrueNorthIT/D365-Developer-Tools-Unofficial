@@ -134,7 +134,8 @@
     "version:minor": "node scripts/bump-version.mjs minor",
     "version:major": "node scripts/bump-version.mjs major",
     "package": "vsce package",
-    "publish": "vsce publish"
+    "publish": "vsce publish",
+    "publish:pre-release": "vsce publish --pre-release"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
