@@ -4,6 +4,10 @@
   "description": "TypeScript development tools for Dynamics 365 / Dataverse",
   "version": "0.0.1",
   "publisher": "truenorth",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TrueNorthIT/D365-Developer-Tools-Unofficial"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
