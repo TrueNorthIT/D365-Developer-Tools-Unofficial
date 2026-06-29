@@ -35,8 +35,9 @@ export class McpBridge {
                 return;
             }
             try {
-                const token          = await this.connectionManager.getAccessToken();
+                const token = await this.connectionManager.getAccessToken();
                 const environmentUrl = this.connectionManager.connection?.environmentUrl;
+                if (!environmentUrl) { throw new Error('No active Dataverse connection.'); }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ token, environmentUrl }));
             } catch (err) {
