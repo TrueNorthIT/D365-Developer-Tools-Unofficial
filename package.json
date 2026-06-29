@@ -1,0 +1,160 @@
+{
+  "name": "d365-developer-tools",
+  "displayName": "D365 Developer Tools (Unofficial)",
+  "description": "TypeScript development tools for Dynamics 365 / Dataverse",
+  "version": "0.0.1",
+  "publisher": "truenorth",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TrueNorthIT/D365-Developer-Tools-Unofficial"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "d365.connect",
+        "title": "Connect to Environment",
+        "category": "D365",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "d365.disconnect",
+        "title": "Disconnect",
+        "category": "D365",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "d365.refreshEntities",
+        "title": "Refresh Entities",
+        "category": "D365",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "d365.browseEntity",
+        "title": "Browse Entity Fields…",
+        "category": "D365",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "d365.generateInterface",
+        "title": "Generate TypeScript Interface",
+        "category": "D365",
+        "icon": "$(symbol-interface)"
+      }
+    ],
+    "configuration": {
+      "title": "D365 Developer Tools (Unofficial)",
+      "properties": {
+        "d365.environmentUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Dataverse environment URL (e.g. https://yourorg.crm11.dynamics.com)"
+        },
+        "d365.tenantId": {
+          "type": "string",
+          "default": "",
+          "description": "Azure AD tenant ID. Leave blank to auto-discover from the environment URL."
+        },
+        "d365.clientId": {
+          "type": "string",
+          "default": "",
+          "description": "Azure AD application (client) ID"
+        },
+        "d365.authMode": {
+          "type": "string",
+          "enum": [
+            "user",
+            "clientCredentials"
+          ],
+          "enumDescriptions": [
+            "Sign in with your Microsoft account (recommended for interactive use)",
+            "App-only authentication using a client ID and secret"
+          ],
+          "default": "",
+          "description": "Authentication method. Leave blank to be prompted each time."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "d365-explorer",
+          "title": "D365 Explorer",
+          "icon": "resources/d365.svg"
+        }
+      ]
+    },
+    "views": {
+      "d365-explorer": [
+        {
+          "id": "d365.entityExplorer",
+          "name": "Entities",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "d365.connect",
+          "when": "view == d365.entityExplorer && !d365.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "d365.disconnect",
+          "when": "view == d365.entityExplorer && d365.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "d365.refreshEntities",
+          "when": "view == d365.entityExplorer && d365.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "d365.browseEntity",
+          "when": "view == d365.entityExplorer && d365.connected",
+          "group": "navigation@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:major": "node scripts/bump-version.mjs major",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "publish:pre-release": "vsce publish --pre-release"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^2.32.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^3.8.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

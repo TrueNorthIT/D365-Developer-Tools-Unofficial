@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "d365": {
+      "command": "node",
+      "args": ["${workspaceFolder}/out/mcp-server.js"]
+    }
+  }
+}
