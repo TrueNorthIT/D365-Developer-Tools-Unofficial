@@ -74,7 +74,13 @@ function mapType(type: string): string {
 }
 
 export function toPascalCase(s: string): string {
-    return s.split(/[_\s]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+    const sanitized = s.replace(/[^a-zA-Z0-9]+/g, ' ').trim();
+    const pascal = sanitized
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join('');
+    return /^\d/.test(pascal) ? '_' + pascal : pascal;
 }
 
 function toEnumKey(label: string): string {
