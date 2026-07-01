@@ -56,6 +56,11 @@ export function friendlyName(environmentUrl: string): string {
 type MenuItem = vscode.QuickPickItem & { action?: () => void | Promise<void> };
 
 export async function showD365Menu(connectionManager: ConnectionManager): Promise<void> {
+    if (connectionManager.isRestoring) {
+        await vscode.window.showInformationMessage('D365: Still restoring previous connection…');
+        return;
+    }
+
     const conn = connectionManager.connection;
     const items: MenuItem[] = [];
 
