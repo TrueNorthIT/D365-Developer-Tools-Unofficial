@@ -112,9 +112,9 @@ export async function compareWebResource(
 
     await vscode.commands.executeCommand(
         'vscode.diff',
-        serverUri,
         target,
-        `${name} (Dynamics 365 ↔ Local)`,
+        serverUri,
+        `${name} (Local ↔ Dynamics 365)`,
     );
 }
 
