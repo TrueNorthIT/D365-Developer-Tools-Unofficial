@@ -176,6 +176,74 @@ export class DataverseClient {
         return new Set(raw.map(c => c.objectid));
     }
 
+    // ── Web resources ─────────────────────────────────────────────────────
+
+    async getWebResourceIdByName(name: string): Promise<string | undefined> {
+        const escaped = name.replace(/'/g, "''");
+        const url = this.apiUrl(
+            'webresourceset',
+            '$select=webresourceid',
+            `$filter=name eq '${escaped}'`,
+        );
+
+        const data = await this.request<ODataResponse<{ webresourceid: string }>>(url);
+        return data?.value[0]?.webresourceid;
+    }
+
+    async createWebResource(params: { name: string; displayName: string; type: number; contentBase64: string }): Promise<string> {
+        const token = await this.connectionManager.getAccessToken();
+        const url   = this.apiUrl('webresourceset');
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { ...this.headers(token), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: params.name,
+                displayname: params.displayName,
+                webresourcetype: params.type,
+                content: params.contentBase64,
+            }),
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`Dataverse API error ${response.status}: ${body || response.statusText}`);
+        }
+
+        const entityId = response.headers.get('OData-EntityId');
+        const match = entityId?.match(/\(([0-9a-fA-F-]{36})\)/);
+        if (!match) { throw new Error('Web resource created but its ID could not be determined.'); }
+        return match[1];
+    }
+
+    async updateWebResourceContent(webResourceId: string, contentBase64: string): Promise<void> {
+        const url = this.apiUrl(`webresourceset(${webResourceId})`);
+        await this.request(url, { method: 'PATCH', body: { content: contentBase64 } });
+    }
+
+    async publishWebResources(webResourceIds: string[]): Promise<void> {
+        if (!webResourceIds.length) { return; }
+
+        const url = this.apiUrl('PublishXml');
+        const parameterXml =
+            `<importexportxml><webresources>${webResourceIds.map(id => `<webresource>${id}</webresource>`).join('')}</webresources></importexportxml>`;
+
+        await this.request(url, { method: 'POST', body: { ParameterXml: parameterXml } });
+    }
+
+    async addSolutionComponent(componentId: string, solutionUniqueName: string): Promise<void> {
+        const url = this.apiUrl('AddSolutionComponent');
+        await this.request(url, {
+            method: 'POST',
+            body: {
+                ComponentId: componentId,
+                ComponentType: 61, // Web Resource
+                SolutionUniqueName: solutionUniqueName,
+                AddRequiredComponents: false,
+            },
+        });
+    }
+
     // ── Internals ─────────────────────────────────────────────────────────
 
     private apiUrl(resource: string, ...queryParts: string[]): string {
@@ -203,6 +271,26 @@ export class DataverseClient {
         }
 
         return results;
+    }
+
+    private async request<T>(url: string, init: { method: string; body?: unknown } = { method: 'GET' }): Promise<T | undefined> {
+        const token   = await this.connectionManager.getAccessToken();
+        const headers = this.headers(token);
+        if (init.body !== undefined) { headers['Content-Type'] = 'application/json'; }
+
+        const response = await fetch(url, {
+            method: init.method,
+            headers,
+            body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`Dataverse API error ${response.status}: ${body || response.statusText}`);
+        }
+
+        const text = await response.text();
+        return text ? JSON.parse(text) as T : undefined;
     }
 
     private headers(token: string): Record<string, string> {

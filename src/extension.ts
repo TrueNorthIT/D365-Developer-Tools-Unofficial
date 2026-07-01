@@ -6,6 +6,7 @@ import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { McpBridge } from './mcpBridge';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
+import { publishWebResources, publishWebResourcesCommand, configureWebResourcesCommand } from './webResourceManager';
 
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
@@ -76,6 +77,18 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('d365.generateInterface', () =>
             generateInterfaceCommand(client, explorerProvider),
         ),
+        vscode.commands.registerCommand('d365.publishWebResource', (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+            const targets = uris?.length ? uris : uri ? [uri] : vscode.window.activeTextEditor ? [vscode.window.activeTextEditor.document.uri] : [];
+            if (!targets.length) {
+                vscode.window.showWarningMessage('D365: No file selected.');
+                return;
+            }
+            return publishWebResources(targets, connectionManager, client);
+        }),
+        vscode.commands.registerCommand('d365.publishWebResources', () =>
+            publishWebResourcesCommand(connectionManager, client),
+        ),
+        vscode.commands.registerCommand('d365.configureWebResources', () => configureWebResourcesCommand()),
     );
 }
 
