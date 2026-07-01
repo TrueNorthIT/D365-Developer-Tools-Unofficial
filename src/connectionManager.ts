@@ -61,8 +61,14 @@ export class ConnectionManager {
         let authProvider: AuthProvider;
 
         if (stored.authMode === 'clientCredentials') {
+            if (!stored.clientId) {
+                this._isRestoring = false;
+                this._onDidChangeConnection.fire(undefined);
+                this.offerReconnect(stored.environmentUrl);
+                return;
+            }
             const secret = await this.context.secrets.get(`${SECRET_KEY_PREFIX}.${stored.environmentUrl}.${stored.clientId}`);
-            if (!secret || !stored.clientId) {
+            if (!secret) {
                 this._isRestoring = false;
                 this._onDidChangeConnection.fire(undefined);
                 this.offerReconnect(stored.environmentUrl);
