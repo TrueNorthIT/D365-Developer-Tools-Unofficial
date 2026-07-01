@@ -57,16 +57,19 @@
         "d365.environmentUrl": {
           "type": "string",
           "default": "",
+          "scope": "resource",
           "description": "Dataverse environment URL (e.g. https://yourorg.crm11.dynamics.com)"
         },
         "d365.tenantId": {
           "type": "string",
           "default": "",
+          "scope": "resource",
           "description": "Azure AD tenant ID. Leave blank to auto-discover from the environment URL."
         },
         "d365.clientId": {
           "type": "string",
           "default": "",
+          "scope": "resource",
           "description": "Azure AD application (client) ID"
         },
         "d365.authMode": {
@@ -80,6 +83,7 @@
             "App-only authentication using a client ID and secret"
           ],
           "default": "",
+          "scope": "resource",
           "description": "Authentication method. Leave blank to be prompted each time."
         }
       }

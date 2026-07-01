@@ -61,7 +61,7 @@ export class ConnectionManager {
         let authProvider: AuthProvider;
 
         if (stored.authMode === 'clientCredentials') {
-            const secret = await this.context.secrets.get(`${SECRET_KEY_PREFIX}.${stored.environmentUrl}`);
+            const secret = await this.context.secrets.get(`${SECRET_KEY_PREFIX}.${stored.environmentUrl}.${stored.clientId}`);
             if (!secret || !stored.clientId) {
                 this._isRestoring = false;
                 this._onDidChangeConnection.fire(undefined);
@@ -147,7 +147,7 @@ export class ConnectionManager {
             );
             if (!clientId) { return; }
 
-            const clientSecret = await this.getOrPromptClientSecret(normalizedUrl);
+            const clientSecret = await this.getOrPromptClientSecret(normalizedUrl, clientId);
             if (!clientSecret) { return; }
 
             authProvider = new ClientCredentialsProvider(normalizedUrl, tenantId, clientId, clientSecret);
@@ -217,8 +217,8 @@ export class ConnectionManager {
         return pick?.value;
     }
 
-    private async getOrPromptClientSecret(environmentUrl: string): Promise<string | undefined> {
-        const secretKey = `${SECRET_KEY_PREFIX}.${environmentUrl}`;
+    private async getOrPromptClientSecret(environmentUrl: string, clientId: string): Promise<string | undefined> {
+        const secretKey = `${SECRET_KEY_PREFIX}.${environmentUrl}.${clientId}`;
         const stored = await this.context.secrets.get(secretKey);
         if (stored) { return stored; }
 

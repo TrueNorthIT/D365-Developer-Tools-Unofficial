@@ -84,6 +84,7 @@ Both paths fetch option set values automatically and produce `const enum`s along
 - **Connect** — prompts for environment URL and authentication method, then validates connectivity via WhoAmI
 - **Disconnect** — clears the stored session
 - **Auto-restore** — the extension activates in the background when VS Code opens and silently restores the last connection; the sidebar shows a spinner while this is in progress and a reconnect prompt if it fails
+- **Per-workspace** — each workspace maintains its own connection independently; opening multiple workspaces simultaneously connects each to its own environment
 
 Authentication options:
 
@@ -110,6 +111,8 @@ The sidebar title bar shows context-sensitive actions:
 | `$(list-flat)` | Browse Entity Fields | Connected |
 
 ## Extension Settings
+
+All settings are workspace-scoped and can be set in `.vscode/settings.json` to pre-fill connection prompts for that workspace.
 
 | Setting | Description | Default |
 |---|---|---|
