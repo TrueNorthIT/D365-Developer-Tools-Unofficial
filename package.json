@@ -49,6 +49,30 @@
         "title": "Generate TypeScript Interface",
         "category": "D365",
         "icon": "$(symbol-interface)"
+      },
+      {
+        "command": "d365.publishWebResource",
+        "title": "Publish Web Resource",
+        "category": "D365",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "d365.publishWebResources",
+        "title": "Publish Web Resources…",
+        "category": "D365",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "d365.configureWebResources",
+        "title": "Configure Web Resources…",
+        "category": "D365",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "d365.compareWebResource",
+        "title": "Compare with Dynamics 365",
+        "category": "D365",
+        "icon": "$(diff)"
       }
     ],
     "configuration": {
@@ -85,6 +109,18 @@
           "default": "",
           "scope": "resource",
           "description": "Authentication method. Leave blank to be prompted each time."
+        },
+        "d365.webResources.rootFolder": {
+          "type": "string",
+          "default": "webresources",
+          "scope": "resource",
+          "description": "Workspace-relative folder that maps to Dataverse web resources. Files under this folder are published using their path relative to it."
+        },
+        "d365.webResources.namePrefix": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Prefix prepended to a file's relative path to form its Dataverse web resource name, e.g. 'new_' for a name like new_/scripts/main.js. A trailing '/' is added automatically if missing. Leave blank for no prefix."
         }
       }
     },
@@ -127,6 +163,40 @@
           "command": "d365.browseEntity",
           "when": "view == d365.entityExplorer && d365.connected",
           "group": "navigation@3"
+        },
+        {
+          "command": "d365.configureWebResources",
+          "when": "view == d365.entityExplorer",
+          "group": "1_config"
+        },
+        {
+          "command": "d365.publishWebResources",
+          "when": "view == d365.entityExplorer && d365.connected",
+          "group": "1_config"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "d365.publishWebResource",
+          "when": "d365.connected && (explorerResourceIsFolder || resourceExtname =~ /\\.(js|html|htm|css|xml|png|jpg|jpeg|gif|svg|ico|xap|resx)$/)",
+          "group": "d365@1"
+        },
+        {
+          "command": "d365.compareWebResource",
+          "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
+          "group": "d365@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "d365.publishWebResource",
+          "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|png|jpg|jpeg|gif|svg|ico|xap|resx)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "d365.compareWebResource",
+          "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
+          "group": "navigation@2"
         }
       ]
     }

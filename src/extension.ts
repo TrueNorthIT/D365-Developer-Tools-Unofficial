@@ -6,6 +6,14 @@ import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { McpBridge } from './mcpBridge';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
+import {
+    publishWebResources,
+    publishWebResourcesCommand,
+    configureWebResourcesCommand,
+    compareWebResource,
+    WebResourceContentProvider,
+    DIFF_SCHEME,
+} from './webResourceManager';
 
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
@@ -68,6 +76,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     registerInsertInterfaceCommand(context, connectionManager, client);
 
+    const webResourceContentProvider = new WebResourceContentProvider();
+    context.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, webResourceContentProvider),
+    );
+
     context.subscriptions.push(
         vscode.commands.registerCommand('d365.connect', () => connectionManager.connect()),
         vscode.commands.registerCommand('d365.disconnect', () => connectionManager.disconnect()),
@@ -75,6 +88,21 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('d365.browseEntity', () => browseEntity(client)),
         vscode.commands.registerCommand('d365.generateInterface', () =>
             generateInterfaceCommand(client, explorerProvider),
+        ),
+        vscode.commands.registerCommand('d365.publishWebResource', (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+            const targets = uris?.length ? uris : uri ? [uri] : vscode.window.activeTextEditor ? [vscode.window.activeTextEditor.document.uri] : [];
+            if (!targets.length) {
+                vscode.window.showWarningMessage('D365: No file selected.');
+                return;
+            }
+            return publishWebResources(targets, connectionManager, client);
+        }),
+        vscode.commands.registerCommand('d365.publishWebResources', () =>
+            publishWebResourcesCommand(connectionManager, client),
+        ),
+        vscode.commands.registerCommand('d365.configureWebResources', () => configureWebResourcesCommand()),
+        vscode.commands.registerCommand('d365.compareWebResource', (uri?: vscode.Uri) =>
+            compareWebResource(uri, connectionManager, client, webResourceContentProvider),
         ),
     );
 }

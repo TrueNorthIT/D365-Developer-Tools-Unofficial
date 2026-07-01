@@ -99,6 +99,33 @@ Client secrets are stored in VS Code's secret storage (OS keychain), never in pl
 
 The **Browse Entity Fields** title bar button (or **D365: Browse Entity Fields** from the palette) opens a searchable quick-pick showing all attributes for any entity — useful for quickly looking up a field name or type without generating any code.
 
+### Web Resources
+
+Publish local files straight to your connected environment as Dataverse web resources — no manual upload through the maker portal.
+
+**Setup**
+
+1. Open the D365 Explorer sidebar and click the `...` (more actions) button in its title bar.
+2. Choose **Configure Web Resources…**.
+3. Pick (or type) the workspace folder that holds your web resource files — the folder icon opens a native browse dialog.
+4. Optionally set a name prefix (e.g. `new_`). A trailing `/` is added automatically if you leave it off, so the resulting Dataverse name looks like `new_/scripts/main.js`.
+
+Local file names map to Dataverse web resource names automatically: `<prefix>/<path relative to the configured folder>`. Supported extensions: `.js`, `.html`/`.htm`, `.css`, `.xml`, `.png`, `.jpg`/`.jpeg`, `.gif`, `.svg`, `.ico`, `.xap`, `.resx`.
+
+**Publishing**
+
+Once connected, publish via any of:
+
+- Right-click a file or folder in Explorer → **Publish Web Resource** (folders publish every supported file underneath them)
+- The cloud-upload icon in the editor title bar, for the file you're currently editing
+- **D365: Publish Web Resources…** from the command palette, or the `...` menu in the D365 Explorer sidebar — opens a multi-select list of every file under your configured folder
+
+If a matching web resource doesn't exist yet, you'll be prompted to create it (display name, type, and optionally a solution to add it to). Existing web resources just have their content updated. Either way, the extension publishes the change immediately afterward, so it goes live without a separate manual publish step.
+
+**Comparing with the server**
+
+Right-click a text-based web resource file (`.js`, `.html`/`.htm`, `.css`, `.xml`, `.resx`, `.svg`) in Explorer, or use the diff icon in the editor title bar, and choose **Compare with Dynamics 365** to open a side-by-side diff of your local file against the content currently published in the environment. Useful for checking what's actually changed before publishing, or spotting drift if someone edited the web resource directly in D365.
+
 ## Title Bar Actions
 
 The sidebar title bar shows context-sensitive actions:
@@ -110,6 +137,8 @@ The sidebar title bar shows context-sensitive actions:
 | `$(refresh)` | Refresh Entities | Connected |
 | `$(list-flat)` | Browse Entity Fields | Connected |
 
+The `...` overflow menu also has **Configure Web Resources…** (always) and **Publish Web Resources…** (when connected).
+
 ## Extension Settings
 
 All settings are resource-scoped (workspace-folder scoped) and can be set in `.vscode/settings.json` to pre-fill connection prompts for that workspace folder.
@@ -120,6 +149,8 @@ All settings are resource-scoped (workspace-folder scoped) and can be set in `.v
 | `d365.tenantId` | Azure AD tenant ID. Leave blank to auto-discover from the environment URL | — |
 | `d365.clientId` | Azure AD application (client) ID | — |
 | `d365.authMode` | `user` or `clientCredentials`. Leave blank to be prompted each time | — |
+| `d365.webResources.rootFolder` | Workspace-relative folder that maps to Dataverse web resources | `webresources` |
+| `d365.webResources.namePrefix` | Prefix prepended to a file's relative path to form its web resource name (trailing `/` added automatically) | — |
 
 ## Claude / AI Integration (MCP Server)
 
