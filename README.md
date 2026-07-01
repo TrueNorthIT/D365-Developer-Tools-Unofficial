@@ -112,7 +112,7 @@ The sidebar title bar shows context-sensitive actions:
 
 ## Extension Settings
 
-All settings are workspace-scoped and can be set in `.vscode/settings.json` to pre-fill connection prompts for that workspace.
+All settings are resource-scoped (workspace-folder scoped) and can be set in `.vscode/settings.json` to pre-fill connection prompts for that workspace folder.
 
 | Setting | Description | Default |
 |---|---|---|
