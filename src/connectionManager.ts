@@ -20,7 +20,7 @@ interface WhoAmIResponse {
     OrganizationId: string;
 }
 
-interface StoredConnection {
+export interface StoredConnection {
     environmentUrl: string;
     tenantId: string;
     clientId?: string;
@@ -29,6 +29,8 @@ interface StoredConnection {
 
 const SECRET_KEY_PREFIX  = 'd365.clientSecret';
 const WORKSPACE_STATE_KEY = 'd365.connection';
+const RECENTS_STATE_KEY = 'd365.recentEnvironments';
+const MAX_RECENTS = 5;
 
 export class ConnectionManager {
     private _connection: D365Connection | undefined;
@@ -143,32 +145,96 @@ export class ConnectionManager {
             }
         }
 
-        let authProvider: AuthProvider;
         let clientId: string | undefined;
-
         if (authMode === 'clientCredentials') {
             clientId = await this.promptOrConfig(
                 config.get<string>('clientId'),
                 { prompt: 'Azure AD application (client) ID', placeHolder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
             );
             if (!clientId) { return; }
+        }
 
-            const clientSecret = await this.getOrPromptClientSecret(normalizedUrl, clientId);
+        await this.establishConnection({ environmentUrl: normalizedUrl, tenantId, clientId, authMode });
+    }
+
+    /** Reconnects to a previously used environment (from the recent-environments list) without re-prompting for URL/tenant/auth mode. */
+    async connectToStored(stored: StoredConnection): Promise<void> {
+        await this.establishConnection(stored);
+    }
+
+    /** For a 'user' auth connection, prompts the Microsoft account picker so the user can switch accounts without changing environment. */
+    async switchAccount(): Promise<void> {
+        if (!this._connection || !(this._authProvider instanceof UserAuthProvider)) {
+            vscode.window.showInformationMessage('D365: Switching accounts is only available for user sign-in connections.');
+            return;
+        }
+        const authProvider = this._authProvider;
+        const environmentUrl = this._connection.environmentUrl;
+
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: 'D365: Switching account…', cancellable: false },
+            async () => {
+                let token: string;
+                try {
+                    token = await authProvider.selectAccount();
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Sign-in failed: ${errorMessage(err)}`);
+                    return;
+                }
+
+                try {
+                    const whoAmI = await this.callWhoAmI(environmentUrl, token);
+                    this._connection = { ...this._connection!, whoAmI };
+                    this._onDidChangeConnection.fire(this._connection);
+                    vscode.window.showInformationMessage('D365: Switched account.');
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Connected but WhoAmI failed: ${errorMessage(err)}`);
+                }
+            },
+        );
+    }
+
+    getRecentEnvironments(): StoredConnection[] {
+        return this.context.globalState.get<StoredConnection[]>(RECENTS_STATE_KEY, []);
+    }
+
+    private async rememberEnvironment(stored: StoredConnection): Promise<void> {
+        const isSame = (a: StoredConnection, b: StoredConnection) =>
+            a.environmentUrl === b.environmentUrl && a.authMode === b.authMode && a.clientId === b.clientId;
+
+        const updated = [stored, ...this.getRecentEnvironments().filter(r => !isSame(r, stored))].slice(0, MAX_RECENTS);
+        await this.context.globalState.update(RECENTS_STATE_KEY, updated);
+    }
+
+    private async establishConnection(stored: StoredConnection): Promise<void> {
+        const { environmentUrl, tenantId, clientId, authMode } = stored;
+        let authProvider: AuthProvider;
+
+        if (authMode === 'clientCredentials') {
+            if (!clientId) {
+                vscode.window.showErrorMessage('D365: This connection is missing its client ID.');
+                return;
+            }
+            const clientSecret = await this.getOrPromptClientSecret(environmentUrl, clientId);
             if (!clientSecret) { return; }
 
-            authProvider = new ClientCredentialsProvider(normalizedUrl, tenantId, clientId, clientSecret);
+            authProvider = new ClientCredentialsProvider(environmentUrl, tenantId, clientId, clientSecret);
         } else {
-            authProvider = new UserAuthProvider(normalizedUrl);
+            authProvider = new UserAuthProvider(environmentUrl);
         }
 
         await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: 'D365', cancellable: false },
             async progress => {
-                progress.report({ message: `Connecting to ${normalizedUrl}…` });
+                progress.report({ message: `Connecting to ${environmentUrl}…` });
 
                 let token: string;
                 try {
-                    token = await authProvider.getAccessToken();
+                    // For user auth, always let the user pick which Microsoft account to use for this connection —
+                    // otherwise VS Code would silently reuse whatever account was last remembered for this scope.
+                    token = authProvider instanceof UserAuthProvider
+                        ? await authProvider.selectAccount()
+                        : await authProvider.getAccessToken();
                 } catch (err) {
                     vscode.window.showErrorMessage(`Authentication failed: ${errorMessage(err)}`);
                     authProvider.dispose();
@@ -179,7 +245,7 @@ export class ConnectionManager {
 
                 let whoAmI: WhoAmIResponse | undefined;
                 try {
-                    whoAmI = await this.callWhoAmI(normalizedUrl, token);
+                    whoAmI = await this.callWhoAmI(environmentUrl, token);
                 } catch (err) {
                     vscode.window.showErrorMessage(`Connected but WhoAmI failed: ${errorMessage(err)}`);
                     authProvider.dispose();
@@ -188,14 +254,15 @@ export class ConnectionManager {
 
                 this._authProvider?.dispose();
                 this._authProvider = authProvider;
-                this._connection   = { environmentUrl: normalizedUrl, tenantId, clientId, authMode, whoAmI };
+                this._connection   = { environmentUrl, tenantId, clientId, authMode, whoAmI };
                 this._onDidChangeConnection.fire(this._connection);
 
                 await this.context.workspaceState.update(WORKSPACE_STATE_KEY, {
-                    environmentUrl: normalizedUrl, tenantId, clientId, authMode,
-} satisfies StoredConnection);
+                    environmentUrl, tenantId, clientId, authMode,
+                } satisfies StoredConnection);
+                await this.rememberEnvironment({ environmentUrl, tenantId, clientId, authMode });
 
-                vscode.window.showInformationMessage(`Connected to ${normalizedUrl}`);
+                vscode.window.showInformationMessage(`Connected to ${environmentUrl}`);
             },
         );
     }
