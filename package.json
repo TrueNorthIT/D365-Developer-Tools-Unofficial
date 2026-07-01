@@ -67,6 +67,12 @@
         "title": "Configure Web Resources…",
         "category": "D365",
         "icon": "$(gear)"
+      },
+      {
+        "command": "d365.compareWebResource",
+        "title": "Compare with Dynamics 365",
+        "category": "D365",
+        "icon": "$(diff)"
       }
     ],
     "configuration": {
@@ -173,14 +179,24 @@
         {
           "command": "d365.publishWebResource",
           "when": "d365.connected && (explorerResourceIsFolder || resourceExtname =~ /\\.(js|html|htm|css|xml|png|jpg|jpeg|gif|svg|ico|xap|resx)$/)",
-          "group": "d365"
+          "group": "d365@1"
+        },
+        {
+          "command": "d365.compareWebResource",
+          "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
+          "group": "d365@2"
         }
       ],
       "editor/title": [
         {
           "command": "d365.publishWebResource",
           "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|png|jpg|jpeg|gif|svg|ico|xap|resx)$/",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "d365.compareWebResource",
+          "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
+          "group": "navigation@2"
         }
       ]
     }

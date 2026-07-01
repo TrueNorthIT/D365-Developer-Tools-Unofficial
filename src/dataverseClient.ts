@@ -190,6 +190,13 @@ export class DataverseClient {
         return data?.value[0]?.webresourceid;
     }
 
+    // Returns the base64-encoded content of a web resource as currently published on the server.
+    async getWebResourceContent(webResourceId: string): Promise<string> {
+        const url = this.apiUrl(`webresourceset(${webResourceId})`, '$select=content');
+        const data = await this.request<{ content: string }>(url);
+        return data?.content ?? '';
+    }
+
     async createWebResource(params: { name: string; displayName: string; type: number; contentBase64: string }): Promise<string> {
         const token = await this.connectionManager.getAccessToken();
         const url   = this.apiUrl('webresourceset');

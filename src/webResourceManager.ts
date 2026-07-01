@@ -37,7 +37,86 @@ const TYPE_LABELS: Record<number, string> = {
 
 const SUPPORTED_EXTENSIONS = Object.keys(TYPE_BY_EXTENSION);
 
+// Extensions that are meaningful to text-diff against the server copy (excludes binary image/xap types).
+const TEXT_EXTENSIONS = new Set(['js', 'html', 'htm', 'css', 'xml', 'resx', 'svg']);
+
+export const DIFF_SCHEME = 'd365-webresource';
+
+// Serves the server-side content of a web resource into a read-only virtual document, for use with vscode.diff.
+export class WebResourceContentProvider implements vscode.TextDocumentContentProvider {
+    private readonly cache = new Map<string, string>();
+
+    setContent(uri: vscode.Uri, content: string): void {
+        this.cache.set(uri.toString(), content);
+    }
+
+    provideTextDocumentContent(uri: vscode.Uri): string {
+        const key = uri.toString();
+        const content = this.cache.get(key);
+        this.cache.delete(key);
+        return content ?? '';
+    }
+}
+
 // ── Public entry points ─────────────────────────────────────────────────────
+
+// Opens a diff view comparing the local file against the current server-side content.
+export async function compareWebResource(
+    fileUri: vscode.Uri | undefined,
+    connectionManager: ConnectionManager,
+    client: DataverseClient,
+    contentProvider: WebResourceContentProvider,
+): Promise<void> {
+    const target = fileUri ?? vscode.window.activeTextEditor?.document.uri;
+    if (!target) {
+        vscode.window.showWarningMessage('D365: No file selected.');
+        return;
+    }
+
+    if (!connectionManager.isConnected) {
+        vscode.window.showErrorMessage('D365: Connect to an environment first.');
+        return;
+    }
+
+    const name = toWebResourceName(target);
+    if (!name) {
+        vscode.window.showErrorMessage('D365: File is not under the configured web resources root folder.');
+        return;
+    }
+
+    const ext = path.extname(target.fsPath).slice(1).toLowerCase();
+    if (!TEXT_EXTENSIONS.has(ext)) {
+        vscode.window.showErrorMessage(`D365: Comparing '.${ext}' web resources isn't supported — this only works for text-based types.`);
+        return;
+    }
+
+    let id: string | undefined;
+    let contentBase64: string;
+    try {
+        id = await client.getWebResourceIdByName(name);
+        if (!id) {
+            vscode.window.showWarningMessage(`D365: Web resource '${name}' does not exist on the server yet.`);
+            return;
+        }
+        contentBase64 = await client.getWebResourceContent(id);
+    } catch (err) {
+        vscode.window.showErrorMessage(`D365: Failed to load '${name}' from the server: ${errorMessage(err)}`);
+        return;
+    }
+
+    const decoded = Buffer.from(contentBase64, 'base64').toString('utf8');
+    // name already ends in the right extension (e.g. "new_/scripts/main.js") so VS Code picks up the correct language.
+    // A trailing query string busts VS Code's document cache so repeat comparisons always show fresh server content.
+    const serverUri = vscode.Uri.parse(`${DIFF_SCHEME}:/${encodeURI(name)}?${Date.now()}`);
+    contentProvider.setContent(serverUri, decoded);
+
+    await vscode.commands.executeCommand(
+        'vscode.diff',
+        serverUri,
+        target,
+        `${name} (Dynamics 365 ↔ Local)`,
+    );
+}
 
 // Publish a set of files/folders (from an Explorer selection or the editor title button).
 export async function publishWebResources(

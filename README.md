@@ -122,6 +122,10 @@ Once connected, publish via any of:
 
 If a matching web resource doesn't exist yet, you'll be prompted to create it (display name, type, and optionally a solution to add it to). Existing web resources just have their content updated. Either way, the extension publishes the change immediately afterward, so it goes live without a separate manual publish step.
 
+**Comparing with the server**
+
+Right-click a text-based web resource file (`.js`, `.html`/`.htm`, `.css`, `.xml`, `.resx`, `.svg`) in Explorer, or use the diff icon in the editor title bar, and choose **Compare with Dynamics 365** to open a side-by-side diff of your local file against the content currently published in the environment. Useful for checking what's actually changed before publishing, or spotting drift if someone edited the web resource directly in D365.
+
 ## Title Bar Actions
 
 The sidebar title bar shows context-sensitive actions:
