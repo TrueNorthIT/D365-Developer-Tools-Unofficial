@@ -33,6 +33,18 @@
         "icon": "$(debug-disconnect)"
       },
       {
+        "command": "d365.switchAccount",
+        "title": "Switch Account…",
+        "category": "D365",
+        "icon": "$(account)"
+      },
+      {
+        "command": "d365.statusBarMenu",
+        "title": "Show Connection Menu",
+        "category": "D365",
+        "icon": "$(plug)"
+      },
+      {
         "command": "d365.refreshEntities",
         "title": "Refresh Entities",
         "category": "D365",
@@ -143,6 +155,12 @@
       ]
     },
     "menus": {
+      "commandPalette": [
+        {
+          "command": "d365.switchAccount",
+          "when": "d365.connected"
+        }
+      ],
       "view/title": [
         {
           "command": "d365.connect",

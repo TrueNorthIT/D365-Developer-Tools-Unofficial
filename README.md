@@ -95,6 +95,17 @@ Authentication options:
 
 Client secrets are stored in VS Code's secret storage (OS keychain), never in plain text.
 
+#### Status Bar
+
+A status bar item on the left shows the current connection at a glance — `$(plug) D365: yourorg` when connected, `$(debug-disconnect) D365: Not Connected` otherwise, or a spinner while a saved connection is being restored. Click it to open a menu with:
+
+- **Disconnect** (when connected)
+- **Switch Account…** — re-prompts the Microsoft account picker for the current environment, for user-auth connections
+- **Connect to Environment…** / **Connect to Different Environment…**
+- **Recent Environments** — the last five environments you've connected to, for one-click reconnect without re-entering the URL, tenant, or auth mode
+
+Connecting or switching accounts always shows the Microsoft account picker, even if only one account is signed in — this prevents silently reusing the wrong account when you have more than one D365 tenant. Routine background token refreshes (e.g. while browsing entities) don't force the account picker; if your Microsoft session has expired, VS Code may still prompt you to sign in again.
+
 ### Browse Entity Fields
 
 The **Browse Entity Fields** title bar button (or **D365: Browse Entity Fields** from the palette) opens a searchable quick-pick showing all attributes for any entity — useful for quickly looking up a field name or type without generating any code.

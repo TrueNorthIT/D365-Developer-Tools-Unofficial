@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
+import { D365StatusBar, showD365Menu } from './statusBar';
 import { McpBridge } from './mcpBridge';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
 import {
@@ -19,6 +20,8 @@ export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
     const client = new DataverseClient(connectionManager);
     const explorerProvider = new EntityExplorerWebviewProvider(connectionManager, client);
+    const statusBar = new D365StatusBar(connectionManager);
+    context.subscriptions.push(statusBar);
 
     // Keep the d365.connected context variable in sync so view/title menu items show/hide correctly
     connectionManager.onDidChangeConnection(conn => {
@@ -46,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Silently restore the last connection for this workspace
     void connectionManager.tryRestoreConnection();
+    statusBar.update(); // reflect the "restoring" state right away (isRestoring is set synchronously above)
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
@@ -84,6 +88,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('d365.connect', () => connectionManager.connect()),
         vscode.commands.registerCommand('d365.disconnect', () => connectionManager.disconnect()),
+        vscode.commands.registerCommand('d365.switchAccount', () => connectionManager.switchAccount()),
+        vscode.commands.registerCommand('d365.statusBarMenu', () => showD365Menu(connectionManager)),
         vscode.commands.registerCommand('d365.refreshEntities', () => explorerProvider.refresh()),
         vscode.commands.registerCommand('d365.browseEntity', () => browseEntity(client)),
         vscode.commands.registerCommand('d365.generateInterface', () =>
