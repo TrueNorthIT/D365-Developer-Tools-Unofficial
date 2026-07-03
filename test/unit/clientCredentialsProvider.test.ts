@@ -35,7 +35,7 @@ describe('ClientCredentialsProvider', () => {
         await provider.getAccessToken();
 
         sinon.assert.calledOnceWithExactly(stub, {
-            scopes: ['https://contoso.crm.dynamics.com/.default'],
+            scopes: ['https://contodso.crm.dynamics.com/.default'],
         });
     });
 
