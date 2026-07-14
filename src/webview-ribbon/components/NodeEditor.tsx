@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react';
 import type { RibbonAction, RibbonControl, RibbonModel, RibbonNodeStatus, RibbonRuleRaw } from '../protocol';
-import { findControl, findGroup, findTab, type Action, type Selection } from '../ribbonState';
+import { displayText, findControl, findGroup, findTab, type Action, type Selection } from '../ribbonState';
 import { parseRuleCondition, ruleConditionLabel } from '../ruleCondition';
 import { RuleDialog } from './RuleDialog';
 import { WebResourceField } from './WebResourceField';
@@ -23,7 +23,7 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
       <div className="node-editor">
         <h3>Tab <StatusTag status={tab.status} /></h3>
         <label>Id<input type="text" value={tab.id} readOnly /></label>
-        <label>Title<input type="text" value={tab.title} onChange={e => dispatch({ type: 'local/updateTab', id: tab.id, title: e.target.value })} /></label>
+        <LabelLikeField label="Title" rawValue={tab.title} id={tab.id} onChange={v => dispatch({ type: 'local/updateTab', id: tab.id, title: v })} />
       </div>
     );
   }
@@ -35,7 +35,7 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
       <div className="node-editor">
         <h3>Group <StatusTag status={found.group.status} /></h3>
         <label>Id<input type="text" value={found.group.id} readOnly /></label>
-        <label>Title<input type="text" value={found.group.title} onChange={e => dispatch({ type: 'local/updateGroup', id: found.group.id, title: e.target.value })} /></label>
+        <LabelLikeField label="Title" rawValue={found.group.title} id={found.group.id} onChange={v => dispatch({ type: 'local/updateGroup', id: found.group.id, title: v })} />
       </div>
     );
   }
@@ -46,9 +46,9 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
     <div className="node-editor">
       <h3>{control.kind} <StatusTag status={control.status} /></h3>
       <label>Id<input type="text" value={control.id} readOnly /></label>
-      <label>Label<input type="text" value={control.label} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { label: e.target.value } })} /></label>
-      <label>Tooltip title<input type="text" value={control.toolTipTitle} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipTitle: e.target.value } })} /></label>
-      <label>Tooltip description<textarea value={control.toolTipDescription} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipDescription: e.target.value } })} /></label>
+      <LabelLikeField label="Label" rawValue={control.label} id={control.id} onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { label: v } })} />
+      <LabelLikeField label="Tooltip title" rawValue={control.toolTipTitle} id={control.id} onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipTitle: v } })} />
+      <LabelLikeField label="Tooltip description" rawValue={control.toolTipDescription} id={control.id} onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipDescription: v } })} multiline />
       <WebResourceField
         label="16×16 icon (web resource name or system path)"
         value={control.image16 ?? ''}
@@ -68,6 +68,45 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
 
       <CommandSection model={model} control={control} dispatch={dispatch} />
     </div>
+  );
+}
+
+// Ribbon labels/titles are frequently unresolved $LocLabels:/$Resources: references -- the effective
+// ribbon response ships no label dictionary to resolve them against (see ribbonXmlParser.ts), so
+// they're stored verbatim as that raw reference string. Editing the raw reference directly isn't
+// useful -- this starts the field from displayText()'s readable guess instead (the same one already
+// shown in the read-only ribbon preview), so there's real text to edit rather than gibberish.
+// Nothing is written back just from viewing it: the guess is only ever a *displayed* value:
+// selecting a control and leaving its fields untouched never dispatches a change, so the
+// underlying reference stays exactly as parsed until the user actually types something.
+//
+// Only an actual $LocLabels:/$Resources: reference gets the guess treatment -- displayText() also
+// derives a guess for an *empty* value (so the read-only preview never shows a totally blank
+// button), which would fight you here: backspacing a field down to blank would otherwise snap back
+// to showing the guess on the next render instead of staying empty, making the field seem
+// impossible to actually clear.
+function LabelLikeField({ label, rawValue, id, onChange, multiline }: {
+  label: string;
+  rawValue: string;
+  id: string;
+  onChange: (v: string) => void;
+  multiline?: boolean;
+}) {
+  const isReference = rawValue.startsWith('$LocLabels:') || rawValue.startsWith('$Resources:');
+  const shown = isReference ? displayText(rawValue, id) : rawValue;
+  return (
+    <>
+      <label>{label}
+        {multiline
+          ? <textarea value={shown} onChange={e => onChange(e.target.value)} />
+          : <input type="text" value={shown} onChange={e => onChange(e.target.value)} />}
+      </label>
+      {isReference && (
+        <p className="hint">
+          The real value is an unresolved $LocLabels:/$Resources: reference -- showing a guess derived from the Id above. Type to set the real value.
+        </p>
+      )}
+    </>
   );
 }
 
