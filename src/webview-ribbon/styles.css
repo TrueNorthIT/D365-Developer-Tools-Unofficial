@@ -345,6 +345,20 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 }
 .command-section h4 { margin: 0 0 10px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
 
+.full-width-button {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  margin: 10px 0;
+  padding: 4px 8px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.full-width-button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+
 .rule-group { margin-top: 12px; max-width: 480px; }
 .rule-group-header {
   display: flex;
@@ -489,18 +503,21 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 }
 .dialog label.checkbox-label input[type=checkbox] { margin: 0; }
 
-.or-rule-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.or-rule-editor > .hint { margin: 0 0 -4px; }
-.or-rule-editor > button { align-self: flex-start; }
-.or-condition {
+/* Shared by any "editable list of typed items" UI -- the OrRule condition list in RuleDialog and
+   the JS action parameter list in ParametersDialog both use this same tile-per-item layout. */
+.item-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.item-list > .hint { margin: 0 0 -4px; }
+.item-list > button { align-self: flex-start; }
+.item-row {
   padding: 8px 10px 2px;
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
   border-radius: 4px;
   background: var(--vscode-editor-background);
 }
-.or-condition-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.or-condition-header select { flex: 1 1 auto; }
-.or-condition-remove {
+.item-row-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.item-row-header select { flex: 1 1 auto; }
+.item-row-move,
+.item-row-remove {
   background: none;
   border: none;
   color: var(--vscode-foreground);
@@ -509,7 +526,9 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
   padding: 2px 6px;
   opacity: 0.75;
 }
-.or-condition-remove:hover { opacity: 1; }
+.item-row-move:hover,
+.item-row-remove:hover { opacity: 1; }
+.item-row-move:disabled { opacity: 0.25; cursor: default; }
 
 .dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .dialog-actions-spacer { flex: 1 1 auto; }

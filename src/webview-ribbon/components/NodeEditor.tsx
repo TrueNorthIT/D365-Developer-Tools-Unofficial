@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react';
-import type { RibbonAction, RibbonControl, RibbonModel, RibbonNodeStatus, RibbonRuleRaw } from '../protocol';
+import type { RibbonAction, RibbonActionParameter, RibbonControl, RibbonModel, RibbonNodeStatus, RibbonRuleRaw } from '../protocol';
 import { displayText, findControl, findGroup, findTab, type Action, type Selection } from '../ribbonState';
 import { parseRuleCondition, ruleConditionLabel } from '../ruleCondition';
+import { ParametersDialog } from './ParametersDialog';
 import { RuleDialog } from './RuleDialog';
 import { WebResourceField } from './WebResourceField';
 
@@ -113,6 +114,7 @@ function LabelLikeField({ label, rawValue, id, onChange, multiline }: {
 // Only the command (and its enable/display rules) that THIS button actually references — not the
 // full model-wide lists, which run into the hundreds on a real ribbon and were unusable to browse.
 function CommandSection({ model, control, dispatch }: { model: RibbonModel; control: RibbonControl; dispatch: Dispatch<Action> }) {
+  const [editingParams, setEditingParams] = useState(false);
   const command = control.commandId ? model.commandDefinitions.find(c => c.id === control.commandId) : undefined;
 
   if (!command) {
@@ -137,20 +139,6 @@ function CommandSection({ model, control, dispatch }: { model: RibbonModel; cont
     <div className="command-section">
       <h4>Command <StatusTag status={command.status} /></h4>
       <label>Command Id<input type="text" value={command.id} readOnly /></label>
-      <label>Enable Rule Ids (comma-separated)
-        <input
-          type="text"
-          value={command.enableRules.join(', ')}
-          onChange={e => dispatch({ type: 'local/updateCommand', id: command.id, patch: { enableRules: splitIds(e.target.value) } })}
-        />
-      </label>
-      <label>Display Rule Ids (comma-separated)
-        <input
-          type="text"
-          value={command.displayRules.join(', ')}
-          onChange={e => dispatch({ type: 'local/updateCommand', id: command.id, patch: { displayRules: splitIds(e.target.value) } })}
-        />
-      </label>
 
       {action?.type === 'Url' && <p className="hint">Action: URL → {action.address} (editing URL actions isn't supported yet — edit the JS fields below to replace it).</p>}
       {action?.type === 'Raw' && <p className="hint">Action preserved as-is (an advanced action type this editor doesn't model). Editing below replaces it with a JavaScript function.</p>}
@@ -173,21 +161,29 @@ function CommandSection({ model, control, dispatch }: { model: RibbonModel; cont
           })}
         />
       </label>
-      <label>Parameters (comma-separated)
-        <input
-          type="text"
-          value={action?.type === 'JavaScriptFunction' ? action.params.join(', ') : ''}
-          onChange={e => dispatch({
-            type: 'local/updateCommand', id: command.id,
-            action: jsAction(action, { params: splitIds(e.target.value) }),
-          })}
+
+      <button type="button" className="full-width-button" onClick={() => setEditingParams(true)}>Edit Parameters…</button>
+
+      {editingParams && (
+        <ParametersDialog
+          params={action?.type === 'JavaScriptFunction' ? action.params : []}
+          onSave={params => {
+            dispatch({ type: 'local/updateCommand', id: command.id, action: jsAction(action, { params }) });
+            setEditingParams(false);
+          }}
+          onClose={() => setEditingParams(false)}
         />
-      </label>
+      )}
 
       <RuleGroup title="Enable Rules" rules={enableRules} referencedCount={command.enableRules.length} ruleType="enable" commandId={command.id} dispatch={dispatch} />
       <RuleGroup title="Display Rules" rules={displayRules} referencedCount={command.displayRules.length} ruleType="display" commandId={command.id} dispatch={dispatch} />
     </div>
   );
+}
+
+function jsAction(current: RibbonAction | undefined, patch: Partial<{ library: string; functionName: string; params: RibbonActionParameter[] }>): RibbonAction {
+  const base = current?.type === 'JavaScriptFunction' ? current : { library: '', functionName: '', params: [] as RibbonActionParameter[] };
+  return { type: 'JavaScriptFunction', ...base, ...patch };
 }
 
 // Shown as compact, labelled tiles rather than always-expanded textareas -- a real command can
@@ -261,11 +257,6 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
   );
 }
 
-function jsAction(current: RibbonAction | undefined, patch: Partial<{ library: string; functionName: string; params: string[] }>): RibbonAction {
-  const base = current?.type === 'JavaScriptFunction' ? current : { library: '', functionName: '', params: [] as string[] };
-  return { type: 'JavaScriptFunction', ...base, ...patch };
-}
-
 function isDefined<T>(v: T | undefined): v is T {
   return v !== undefined;
 }
@@ -277,8 +268,4 @@ function statusSuffix(status: RibbonNodeStatus): string {
 function StatusTag({ status }: { status: string }) {
   if (status === 'unchanged') { return null; }
   return <span className={`status-tag status-${status}`}>{status}</span>;
-}
-
-function splitIds(value: string): string[] {
-  return value.split(',').map(s => s.trim()).filter(Boolean);
 }

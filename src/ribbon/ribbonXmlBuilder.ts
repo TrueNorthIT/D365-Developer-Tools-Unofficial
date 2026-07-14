@@ -164,10 +164,15 @@ function serializeCommandDefinition(cmd: RibbonCommandDefinition): string {
         const actions: Record<string, unknown[]> = {};
         for (const action of cmd.actions) {
             if (action.type === 'JavaScriptFunction') {
+                const paramsByTag: Record<string, unknown[]> = {};
+                for (const p of action.params) {
+                    const value = p.type === 'BoolParameter' ? (p.value ? 'true' : 'false') : p.value;
+                    (paramsByTag[p.type] ??= []).push({ '@_Value': value });
+                }
                 (actions.JavaScriptFunction ??= []).push({
                     '@_Library': action.library,
                     '@_FunctionName': action.functionName,
-                    ...(action.params.length ? { CrmParameter: action.params.map(v => ({ '@_Value': v })) } : {}),
+                    ...paramsByTag,
                 });
             } else if (action.type === 'Url') {
                 (actions.Url ??= []).push({ '@_Address': action.address });

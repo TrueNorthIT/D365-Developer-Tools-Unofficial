@@ -37,8 +37,21 @@ export interface RibbonTab {
     status: RibbonNodeStatus;
 }
 
+// A JavaScriptFunction's parameter, per RibbonTypes.xsd's ParameterType group -- five possible
+// child tags, each just a single Value attribute (no Name; that's only valid/required for a Url
+// action's *named* query-string parameters, which aren't modeled here). Bool/Decimal/Int values
+// are kept as strings too (matching how similarly numeric-ish fields elsewhere in this model, e.g.
+// SelectionCountRule's minimum/maximum, are represented) -- simpler than round-tripping through an
+// actual number/boolean and back for what's ultimately just an XML attribute string.
+export type RibbonActionParameter =
+    | { type: 'BoolParameter'; value: boolean }
+    | { type: 'CrmParameter'; value: string }
+    | { type: 'DecimalParameter'; value: string }
+    | { type: 'IntParameter'; value: string }
+    | { type: 'StringParameter'; value: string };
+
 export type RibbonAction =
-    | { type: 'JavaScriptFunction'; library: string; functionName: string; params: string[] }
+    | { type: 'JavaScriptFunction'; library: string; functionName: string; params: RibbonActionParameter[] }
     | { type: 'Url'; address: string }
     | { type: 'Raw'; xml: string };
 

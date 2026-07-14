@@ -36,8 +36,15 @@ export interface RibbonTab {
   status: RibbonNodeStatus;
 }
 
+export type RibbonActionParameter =
+  | { type: 'BoolParameter'; value: boolean }
+  | { type: 'CrmParameter'; value: string }
+  | { type: 'DecimalParameter'; value: string }
+  | { type: 'IntParameter'; value: string }
+  | { type: 'StringParameter'; value: string };
+
 export type RibbonAction =
-  | { type: 'JavaScriptFunction'; library: string; functionName: string; params: string[] }
+  | { type: 'JavaScriptFunction'; library: string; functionName: string; params: RibbonActionParameter[] }
   | { type: 'Url'; address: string }
   | { type: 'Raw'; xml: string };
 

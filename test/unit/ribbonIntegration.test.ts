@@ -133,7 +133,7 @@ describe('ribbon loading integration (DataverseClient.getEntityRibbonXml -> pars
                 type: 'JavaScriptFunction',
                 library: '$webresource:new_lib.js',
                 functionName: 'doThing',
-                params: ['hello'],
+                params: [{ type: 'StringParameter', value: 'hello' }],
             });
 
             assert.strictEqual(model.enableRules.length, 1);

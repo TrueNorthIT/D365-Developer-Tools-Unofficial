@@ -1,6 +1,7 @@
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import type {
     RibbonAction,
+    RibbonActionParameter,
     RibbonCommandDefinition,
     RibbonControl,
     RibbonModel,
@@ -12,11 +13,16 @@ import type {
 // into a plain RibbonModel. Pure / no `vscode` import, so it's usable from tests and (indirectly,
 // via the extension host) the webview.
 
+// The five parameter tags a JavaScriptFunction (or CustomRule/Url) can have, per RibbonTypes.xsd's
+// ParameterType group.
+const PARAM_TAGS = ['BoolParameter', 'CrmParameter', 'DecimalParameter', 'IntParameter', 'StringParameter'];
+
 // Tags that can repeat and must always deserialize as arrays, even when there's exactly one.
 const ARRAY_TAGS = new Set([
     'Tab', 'Group', 'Button', 'SplitButton', 'FlyoutAnchor', 'MenuSection',
     'CommandDefinition', 'EnableRule', 'DisplayRule', 'LocLabel', 'Title',
-    'CrmParameter', 'StringParameter', 'JavaScriptFunction', 'Url', 'ContextualGroup',
+    'JavaScriptFunction', 'Url', 'ContextualGroup',
+    ...PARAM_TAGS,
 ]);
 
 const CONTROL_TAGS = new Set(['Button', 'SplitButton', 'FlyoutAnchor', 'MenuSection']);
@@ -209,13 +215,13 @@ function parseActions(actionsNode: Record<string, unknown> | undefined): RibbonA
         // Parameters are positional JS function arguments, so their order matters. fast-xml-parser
         // (without the heavier preserveOrder mode) groups same-tag siblings into arrays but keeps
         // distinct tag names in first-encountered order — walking Object.keys() recovers the
-        // original document order for contiguous runs of CrmParameter/StringParameter, which covers
-        // the common case (params of one type aren't usually interleaved with the other).
-        const params: string[] = [];
+        // original document order for contiguous runs of any one parameter tag, which covers the
+        // common case (params of one type aren't usually interleaved with another type).
+        const params: RibbonActionParameter[] = [];
         for (const key of Object.keys(node)) {
-            if (key !== 'CrmParameter' && key !== 'StringParameter') { continue; }
+            if (!PARAM_TAGS.includes(key)) { continue; }
             for (const p of asArray(node[key]).map(asObj).filter(isObj)) {
-                params.push(attr(p, 'Value') ?? '');
+                params.push(parseActionParameter(key, p));
             }
         }
         result.push({ type: 'JavaScriptFunction', library: attr(node, 'Library') ?? '', functionName: attr(node, 'FunctionName') ?? '', params });
@@ -240,6 +246,12 @@ function parseActions(actionsNode: Record<string, unknown> | undefined): RibbonA
     }
 
     return result;
+}
+
+function parseActionParameter(tag: string, node: Record<string, unknown>): RibbonActionParameter {
+    const value = attr(node, 'Value') ?? '';
+    if (tag === 'BoolParameter') { return { type: 'BoolParameter', value: value === 'true' || value === '1' }; }
+    return { type: tag as Exclude<RibbonActionParameter['type'], 'BoolParameter'>, value };
 }
 
 // ── Rule definitions (kept opaque) ───────────────────────────────────────────

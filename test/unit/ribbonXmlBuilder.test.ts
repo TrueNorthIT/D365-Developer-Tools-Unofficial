@@ -40,7 +40,7 @@ function baseModel(): RibbonModel {
         ],
         commandDefinitions: [
             { id: 'cmd.unchanged', enableRules: [], displayRules: [], actions: [], status: 'unchanged' },
-            { id: 'cmd.added', enableRules: ['rule.enable1'], displayRules: [], actions: [{ type: 'JavaScriptFunction', library: '$webresource:lib.js', functionName: 'run', params: ['a'] }], status: 'added' },
+            { id: 'cmd.added', enableRules: ['rule.enable1'], displayRules: [], actions: [{ type: 'JavaScriptFunction', library: '$webresource:lib.js', functionName: 'run', params: [{ type: 'StringParameter', value: 'a' }] }], status: 'added' },
         ],
         enableRules: [
             { id: 'rule.enable1', xml: '<EnableRule Id="rule.enable1">\n  <CrmClientTypeRule Type="Web" />\n</EnableRule>', status: 'added' },
@@ -84,6 +84,28 @@ describe('buildRibbonDiffXml', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<CommandDefinition Id="cmd\.added">/);
         assert.doesNotMatch(xml, /Id="cmd\.unchanged"/);
+    });
+
+    it('serializes each JavaScriptFunction parameter under its own type tag, not always CrmParameter', () => {
+        const model = baseModel();
+        model.commandDefinitions[1].actions = [{
+            type: 'JavaScriptFunction',
+            library: '$webresource:lib.js',
+            functionName: 'run',
+            params: [
+                { type: 'StringParameter', value: 'hello' },
+                { type: 'CrmParameter', value: 'PrimaryControl' },
+                { type: 'BoolParameter', value: true },
+                { type: 'DecimalParameter', value: '1.5' },
+                { type: 'IntParameter', value: '3' },
+            ],
+        }];
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<StringParameter Value="hello"\s*\/>/);
+        assert.match(xml, /<CrmParameter Value="PrimaryControl"\s*\/>/);
+        assert.match(xml, /<BoolParameter Value="true"\s*\/>/);
+        assert.match(xml, /<DecimalParameter Value="1\.5"\s*\/>/);
+        assert.match(xml, /<IntParameter Value="3"\s*\/>/);
     });
 
     it('includes added/modified rule fragments under RuleDefinitions', () => {

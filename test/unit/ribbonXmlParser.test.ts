@@ -124,7 +124,7 @@ describe('parseRibbonXml', () => {
             type: 'JavaScriptFunction',
             library: '$webresource:new_lib.js',
             functionName: 'doThing',
-            params: ['hello', 'PrimaryControl'],
+            params: [{ type: 'StringParameter', value: 'hello' }, { type: 'CrmParameter', value: 'PrimaryControl' }],
         });
 
         const cmd2 = model.commandDefinitions.find(c => c.id === 'cmd2')!;

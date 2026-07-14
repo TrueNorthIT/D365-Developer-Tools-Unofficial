@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { RibbonRuleRaw } from '../protocol';
+import { EnumField, TextField } from './FormFields';
 import { WebResourceField } from './WebResourceField';
 import {
   APPLIES_TO_OPTIONS,
@@ -148,7 +149,7 @@ function OrRuleEditor({ condition, wrapperTag, onChange }: {
   };
 
   return (
-    <div className="or-rule-editor">
+    <div className="item-list">
       <p className="hint">True if any one of these conditions is true.</p>
       {condition.conditions.map((leaf, i) => (
         <LeafConditionEditor
@@ -176,34 +177,16 @@ function LeafConditionEditor({ leaf, wrapperTag, onChange, onRemove }: {
   const typeOptions = availableTypes.includes(leaf.type) ? availableTypes : [leaf.type, ...availableTypes];
 
   return (
-    <div className="or-condition">
-      <div className="or-condition-header">
+    <div className="item-row">
+      <div className="item-row-header">
         <select value={leaf.type} onChange={e => onChange(defaultLeafCondition(e.target.value as RibbonRuleLeafConditionType))}>
           {typeOptions.map(t => <option key={t} value={t}>{RULE_CONDITION_LABELS[t]}</option>)}
         </select>
-        <button type="button" className="or-condition-remove" onClick={onRemove} aria-label="Remove condition" title="Remove condition">✕</button>
+        <button type="button" className="item-row-remove" onClick={onRemove} aria-label="Remove condition" title="Remove condition">✕</button>
       </div>
       <LeafFields condition={leaf} onChange={onChange} />
     </div>
   );
-}
-
-// Ensures the select's current value is always present as an option, even if it falls outside the
-// known enum list (legacy/unexpected data) -- otherwise a controlled <select> with no matching
-// <option> shows blank, which looks like the field silently lost its value even though it hasn't.
-function EnumField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
-  const values = options.includes(value) ? options : [value, ...options];
-  return (
-    <label>{label}
-      <select value={value} onChange={e => onChange(e.target.value)}>
-        {values.map(v => <option key={v || '(none)'} value={v}>{v || '(none)'}</option>)}
-      </select>
-    </label>
-  );
-}
-
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return <label>{label}<input type="text" value={value} onChange={e => onChange(e.target.value)} /></label>;
 }
 
 function InvertResult({ condition, onChange }: { condition: RibbonRuleLeafCondition; onChange: (c: RibbonRuleLeafCondition) => void }) {
