@@ -12,7 +12,11 @@ import type { RibbonCommandDefinition, RibbonControl, RibbonGroup, RibbonModel, 
 // once real import/publish support lands. This module has no `vscode` import and produces text only;
 // nothing here talks to Dataverse.
 
-const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true, suppressEmptyNode: true });
+// suppressBooleanAttributes defaults to true in fast-xml-parser, which would render any attribute
+// whose value happens to be the string "true" as a bare, value-less attribute instead of
+// `Attr="true"` -- none of the fields serialized below hit that today, but nothing here should rely
+// on it staying that way.
+const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true, suppressEmptyNode: true, suppressBooleanAttributes: false });
 
 export function buildRibbonDiffXml(model: RibbonModel): string {
     const customActions: string[] = [];

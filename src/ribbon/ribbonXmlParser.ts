@@ -228,7 +228,10 @@ function parseActions(actionsNode: Record<string, unknown> | undefined): RibbonA
     }
 
     // Any action type we don't model explicitly is preserved as raw XML so it round-trips.
-    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true });
+    // suppressBooleanAttributes defaults to true in fast-xml-parser, which would re-serialize e.g.
+    // InvertResult="true" (a real, common rule attribute) as a bare `InvertResult` -- silently
+    // corrupting it the moment this round-trips through the builder.
+    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true, suppressBooleanAttributes: false });
     for (const [tag, value] of Object.entries(actionsNode)) {
         if (tag === 'JavaScriptFunction' || tag === 'Url') { continue; }
         for (const raw of asArray(value)) {
@@ -242,7 +245,10 @@ function parseActions(actionsNode: Record<string, unknown> | undefined): RibbonA
 // ── Rule definitions (kept opaque) ───────────────────────────────────────────
 
 function parseRules(node: Record<string, unknown> | undefined, tag: 'EnableRule' | 'DisplayRule'): RibbonRuleRaw[] {
-    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true });
+    // suppressBooleanAttributes defaults to true in fast-xml-parser, which would re-serialize e.g.
+    // InvertResult="true" (a real, common rule attribute) as a bare `InvertResult` -- silently
+    // corrupting it the moment this round-trips through the builder.
+    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true, suppressBooleanAttributes: false });
     return asArray(node?.[tag]).map(asObj).filter(isObj).map(rule => ({
         id: attr(rule, 'Id') ?? '',
         xml: builder.build({ [tag]: rule }) as string,
