@@ -300,8 +300,6 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 }
 .node-editor input[readOnly] { opacity: 0.7; }
 .node-editor textarea { min-height: 60px; resize: vertical; }
-.node-editor textarea.raw-xml { min-height: 220px; font-family: var(--vscode-editor-font-family, monospace); }
-.node-editor textarea.raw-xml.small { min-height: 100px; }
 .node-editor .hint { font-size: 11px; color: var(--vscode-descriptionForeground); max-width: 480px; }
 
 .command-section {
@@ -330,15 +328,39 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 }
 .rule-group-header button:hover { background: var(--vscode-button-secondaryHoverBackground); }
 
-.rule-block { margin-bottom: 10px; }
-.rule-block-id {
+.rule-tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.rule-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  max-width: 160px;
+  padding: 4px 10px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.rule-tile:hover { background: var(--vscode-list-hoverBackground); }
+.rule-tile.status-added { border-color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b); }
+.rule-tile.status-modified { border-color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+.rule-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-family: var(--vscode-editor-font-family, monospace);
-  color: var(--vscode-descriptionForeground);
-  margin-bottom: 3px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+}
+.rule-tile-kind {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  opacity: 0.75;
 }
 
 .status-tag {
@@ -349,3 +371,123 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
 }
+
+/* ── Rule dialog ── */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: min(560px, 90vw);
+  max-height: 85vh;
+  padding: 16px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dialog-header h3 { margin: 0; font-size: 13px; }
+.dialog-close {
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  opacity: 0.75;
+}
+.dialog-close:hover { opacity: 1; }
+.dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.dialog input[type=text], .dialog input[type=number], .dialog select, .dialog textarea {
+  padding: 4px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+  font-size: 12px;
+}
+.dialog input[readOnly] { opacity: 0.7; }
+.dialog textarea.raw-xml { min-height: 260px; font-family: var(--vscode-editor-font-family, monospace); resize: vertical; }
+.dialog textarea.raw-xml[readonly] { min-height: 140px; opacity: 0.85; }
+.link-button {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: -4px 0 10px;
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: underline;
+}
+.link-button:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-foreground)); }
+.dialog .hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin: -6px 0 10px; }
+.dialog label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+.dialog label.checkbox-label input[type=checkbox] { margin: 0; }
+
+.or-rule-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.or-rule-editor > .hint { margin: 0 0 -4px; }
+.or-rule-editor > button { align-self: flex-start; }
+.or-condition {
+  padding: 8px 10px 2px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+}
+.or-condition-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.or-condition-header select { flex: 1 1 auto; }
+.or-condition-remove {
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  opacity: 0.75;
+}
+.or-condition-remove:hover { opacity: 1; }
+
+.dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.dialog-actions-spacer { flex: 1 1 auto; }
+.dialog-actions button {
+  padding: 4px 12px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.dialog-actions button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.dialog-actions button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.dialog-actions button.primary:hover { background: var(--vscode-button-hoverBackground); }

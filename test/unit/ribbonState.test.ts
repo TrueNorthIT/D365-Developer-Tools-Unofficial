@@ -136,3 +136,33 @@ describe('ribbonState reducer: addRuleToCommand', () => {
         assert.strictEqual(next.model!.enableRules.length, 1);
     });
 });
+
+describe('ribbonState reducer: removeRuleFromCommand', () => {
+    it('unlinks the rule from the command and drops the now-unreferenced rule definition', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/removeRuleFromCommand', commandId: 'cmd1', ruleType: 'enable', ruleId: 'rule.enable1' });
+
+        const command = next.model!.commandDefinitions.find(c => c.id === 'cmd1')!;
+        assert.deepStrictEqual(command.enableRules, []);
+        assert.strictEqual(command.status, 'modified');
+        assert.strictEqual(next.model!.enableRules.length, 0);
+    });
+
+    it('keeps the rule definition when another command still references it', () => {
+        const model = baseModel();
+        model.commandDefinitions.push({ id: 'cmd2', enableRules: ['rule.enable1'], displayRules: [], actions: [], status: 'unchanged' });
+        const next = reducer(stateWithModel(model), { type: 'local/removeRuleFromCommand', commandId: 'cmd1', ruleType: 'enable', ruleId: 'rule.enable1' });
+
+        const cmd1 = next.model!.commandDefinitions.find(c => c.id === 'cmd1')!;
+        const cmd2 = next.model!.commandDefinitions.find(c => c.id === 'cmd2')!;
+        assert.deepStrictEqual(cmd1.enableRules, []);
+        assert.deepStrictEqual(cmd2.enableRules, ['rule.enable1']);
+        assert.strictEqual(next.model!.enableRules.length, 1, 'rule definition should survive since cmd2 still references it');
+    });
+
+    it('does nothing when the command id is not found', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/removeRuleFromCommand', commandId: 'does.not.exist', ruleType: 'enable', ruleId: 'rule.enable1' });
+        assert.strictEqual(next.model!.enableRules.length, 1);
+    });
+});

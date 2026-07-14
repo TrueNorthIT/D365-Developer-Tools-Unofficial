@@ -1,4 +1,5 @@
 import type { InboundMessage, RibbonAction, RibbonCommandDefinition, RibbonControl, RibbonGroup, RibbonModel, RibbonRuleRaw, RibbonTab } from './protocol';
+import { defaultRuleCondition, serializeRuleCondition } from './ruleCondition';
 
 // Reducer + pure helpers for the ribbon editor's in-memory edit state. All edits mutate a
 // structuredClone of the last-known model and tag the touched node's `status`, so
@@ -76,6 +77,7 @@ export type LocalAction =
   | { type: 'local/addControl'; tabId: string; groupId: string; kind: RibbonControl['kind'] }
   | { type: 'local/createCommandForControl'; controlId: string }
   | { type: 'local/addRuleToCommand'; commandId: string; ruleType: 'enable' | 'display' }
+  | { type: 'local/removeRuleFromCommand'; commandId: string; ruleType: 'enable' | 'display'; ruleId: string }
   | { type: 'local/deleteSelected' };
 
 export type Action = InboundMessage | LocalAction;
@@ -188,11 +190,31 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
             if (!command) { break; }
             const id = newId(action.ruleType === 'enable' ? 'new_enablerule' : 'new_displayrule');
             const tag = action.ruleType === 'enable' ? 'EnableRule' : 'DisplayRule';
-            const rule: RibbonRuleRaw = { id, xml: `<${tag} Id="${id}">\n</${tag}>`, status: 'added' };
+            // Seeded as a real structured condition (Client Type: Web) rather than an empty body, so
+            // RuleDialog opens straight into its structured form instead of falling back to raw XML.
+            const xml = serializeRuleCondition(id, tag, defaultRuleCondition('CrmClientTypeRule'));
+            const rule: RibbonRuleRaw = { id, xml, status: 'added' };
             (action.ruleType === 'enable' ? model.enableRules : model.displayRules).push(rule);
             if (action.ruleType === 'enable') { command.enableRules = [...command.enableRules, id]; }
             else { command.displayRules = [...command.displayRules, id]; }
             touch(command);
+            break;
+        }
+        case 'local/removeRuleFromCommand': {
+            const command = model.commandDefinitions.find(c => c.id === action.commandId);
+            if (!command) { break; }
+            if (action.ruleType === 'enable') { command.enableRules = command.enableRules.filter(id => id !== action.ruleId); }
+            else { command.displayRules = command.displayRules.filter(id => id !== action.ruleId); }
+            touch(command);
+
+            // Drop the rule definition entirely once nothing references it anymore, so removing it
+            // from this command doesn't leave a dangling entry that would still get exported.
+            const stillReferenced = model.commandDefinitions.some(c => c.enableRules.includes(action.ruleId) || c.displayRules.includes(action.ruleId));
+            if (!stillReferenced) {
+                const list = action.ruleType === 'enable' ? model.enableRules : model.displayRules;
+                const idx = list.findIndex(r => r.id === action.ruleId);
+                if (idx !== -1) { list.splice(idx, 1); }
+            }
             break;
         }
         case 'local/deleteSelected': {
