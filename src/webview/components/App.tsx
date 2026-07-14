@@ -68,6 +68,7 @@ export function App() {
           onClose={() => setCtx(null)}
           onMakeInterface={api.makeInterface}
           onMakeEnum={api.makeEnum}
+          onOpenRibbonEditor={api.openRibbonEditor}
         />
       )}
     </div>

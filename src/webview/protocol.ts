@@ -46,7 +46,12 @@ export type OutboundMessage =
       attributeLogicalName: string;
       attributeDisplayName: string;
       attributeType: string;
-    };
+    }
+  | { type: 'openRibbonEditor'; entityLogicalName: string; entityDisplayName: string; ribbonLocation: RibbonLocation };
+
+// Mirrors (a subset of) the Web API's RibbonLocationFilters enum — see src/dataverseClient.ts's
+// RibbonLocationFilter for the full type shared with the extension host.
+export type RibbonLocation = 'Form' | 'HomepageGrid' | 'SubGrid';
 
 // ── RPC: request/response over the same transport ─────────────────────────────
 // Adding a new data source (e.g. relationships) = one new op here + one handler case in

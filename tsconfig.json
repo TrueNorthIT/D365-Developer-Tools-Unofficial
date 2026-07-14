@@ -9,7 +9,7 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "exclude": ["node_modules", ".vscode-test", "test", "src/webview"],
+  "exclude": ["node_modules", ".vscode-test", "test", "src/webview", "src/webview-ribbon"],
   "ts-node": {
     "transpileOnly": true,
     "compilerOptions": {

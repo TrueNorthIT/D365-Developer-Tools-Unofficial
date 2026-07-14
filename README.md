@@ -12,6 +12,7 @@ A VS Code extension for TypeScript development against Dynamics 365 / Dataverse.
   - [Connection Management](#connection-management)
   - [Browse Entity Fields](#browse-entity-fields)
   - [Web Resources](#web-resources)
+  - [Ribbon Editor](#ribbon-editor)
 - [Title Bar Actions](#title-bar-actions)
 - [Extension Settings](#extension-settings)
 - [Claude / AI Integration (MCP Server)](#claude--ai-integration-mcp-server)
@@ -151,6 +152,26 @@ If a matching web resource doesn't exist yet, you'll be prompted to create it (d
 **Comparing with the server**
 
 Right-click a text-based web resource file (`.js`, `.html`/`.htm`, `.css`, `.xml`, `.resx`, `.svg`) in Explorer, or use the diff icon in the editor title bar, and choose **Compare with Dynamics 365** to open a side-by-side diff of your local file against the content currently published in the environment. Useful for checking what's actually changed before publishing, or spotting drift if someone edited the web resource directly in D365.
+
+### Ribbon Editor
+
+A Ribbon Workbench-style viewer/editor for an entity's command bar, opened straight from the sidebar — no separate tool needed.
+
+**Opening it**
+
+- Right-click an entity in the explorer → **Edit Ribbon** → choose a location (**Main Form**, **Home Grid**, or **Sub-Grid**)
+- Or run **D365: Edit Ribbon…** from the command palette, which prompts for the entity and location instead
+
+Each entity/location combination opens in its own editor tab, since they're materially different ribbons (different tabs, groups, and buttons).
+
+**What you can do**
+
+- Browse the effective ribbon (tabs → groups → buttons/split-buttons/flyouts) rendered to look like the real thing, icons included
+- Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules
+- Add new tabs, groups, and controls, or mark existing ones for deletion
+- **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution
+
+Edits stay in-memory in the editor; publishing the diff back to Dataverse (e.g. via a solution import) is a manual step for now.
 
 ## Title Bar Actions
 

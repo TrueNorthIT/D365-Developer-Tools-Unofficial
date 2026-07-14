@@ -1,0 +1,93 @@
+// Message protocol between the extension host (ribbonEditorPanel.ts) and this webview.
+// Deliberately separate from src/webview/protocol.ts (the sidebar's) — this panel pushes one full
+// model snapshot and gets edit-tracked snapshots back, rather than the sidebar's incremental
+// event/RPC mix, so sharing a protocol type would only add confusion.
+//
+// A plain, JSON-serializable mirror of src/ribbon/ribbonModel.ts. Kept webview-local (no `vscode`
+// or extension-host imports) so the webview tsconfig doesn't need to resolve Node types.
+
+export type RibbonNodeStatus = 'unchanged' | 'added' | 'modified' | 'deleted';
+
+export interface RibbonControl {
+  kind: 'Button' | 'SplitButton' | 'FlyoutAnchor' | 'MenuSection';
+  id: string;
+  label: string;
+  toolTipTitle: string;
+  toolTipDescription: string;
+  image16?: string;
+  image32?: string;
+  commandId?: string;
+  controls?: RibbonControl[];
+  status: RibbonNodeStatus;
+}
+
+export interface RibbonGroup {
+  id: string;
+  title: string;
+  controls: RibbonControl[];
+  status: RibbonNodeStatus;
+}
+
+export interface RibbonTab {
+  id: string;
+  title: string;
+  groups: RibbonGroup[];
+  status: RibbonNodeStatus;
+}
+
+export type RibbonAction =
+  | { type: 'JavaScriptFunction'; library: string; functionName: string; params: string[] }
+  | { type: 'Url'; address: string }
+  | { type: 'Raw'; xml: string };
+
+export interface RibbonCommandDefinition {
+  id: string;
+  enableRules: string[];
+  displayRules: string[];
+  actions: RibbonAction[];
+  status: RibbonNodeStatus;
+}
+
+export interface RibbonRuleRaw {
+  id: string;
+  xml: string;
+  status: RibbonNodeStatus;
+}
+
+export interface RibbonModel {
+  tabs: RibbonTab[];
+  commandDefinitions: RibbonCommandDefinition[];
+  enableRules: RibbonRuleRaw[];
+  displayRules: RibbonRuleRaw[];
+  locLabels: Record<string, string>;
+}
+
+// ── Events: Extension → Webview ───────────────────────────────────────────────
+export type InboundMessage =
+  | { type: 'ribbonModel'; entityLogicalName: string; entityDisplayName: string; ribbonLocationLabel: string; model: RibbonModel }
+  | { type: 'ribbonError'; message: string }
+  | { type: 'ribbonLoading' };
+
+// ── Events: Webview → Extension ───────────────────────────────────────────────
+export type OutboundMessage =
+  | { type: 'ready' }
+  | { type: 'reloadFromServer' }
+  | { type: 'exportRibbonDiffXml'; model: RibbonModel };
+
+// ── RPC: request/response over the same transport (icon fetching) ───────────
+// Mirrors src/webview/protocol.ts's RpcRequestMap shape — see src/webview/rpc.ts for the transport.
+export interface RpcRequestMap {
+  /** Resolves a ribbon control's image16/image32 reference to a data: URI, or null if unresolvable. */
+  getIcon: { params: { ref: string }; result: string | null };
+}
+export type RpcOp = keyof RpcRequestMap;
+
+export interface RpcRequest {
+  kind: 'request';
+  id: number;
+  op: RpcOp;
+  params: unknown;
+}
+export type RpcResponse =
+  | { kind: 'response'; id: number; ok: true; data: unknown }
+  | { kind: 'response'; id: number; ok: false; error: string };

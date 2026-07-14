@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from './connectionManager';
-import type { DataverseClient } from './dataverseClient';
+import type { DataverseClient, RibbonLocationFilter } from './dataverseClient';
 import { generateInterface, generateEnum, toPascalCase, OPTION_SET_TYPES } from './interfaceGenerator';
 
 export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider {
@@ -15,6 +15,7 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         private readonly connectionManager: ConnectionManager,
         private readonly client: DataverseClient,
         private readonly extensionUri: vscode.Uri,
+        private readonly openRibbonEditor: (entityLogicalName: string, entityDisplayName: string, ribbonLocation: RibbonLocationFilter) => void,
     ) {
         connectionManager.onDidChangeConnection(conn => {
             this.post({ type: 'connectionState', connected: !!conn, restoring: false });
@@ -76,6 +77,9 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
                     msg.attributeDisplayName as string,
                     msg.attributeType as string,
                 );
+                break;
+            case 'openRibbonEditor':
+                this.openRibbonEditor(msg.entityLogicalName as string, msg.entityDisplayName as string, msg.ribbonLocation as RibbonLocationFilter);
                 break;
         }
     }

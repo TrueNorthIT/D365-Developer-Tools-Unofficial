@@ -69,6 +69,9 @@ type MessageHandler = (msg: Record<string, unknown>) => Promise<void> | void;
 // Stand-in for context.extensionUri passed to the provider.
 const EXT_URI = vscodeMock.Uri.file('/ext');
 
+// Stand-in for the openRibbonEditor callback (real wiring: extension.ts -> RibbonEditorPanel).
+const NOOP_OPEN_RIBBON_EDITOR = () => { /* not exercised by most tests */ };
+
 function makeView() {
     let handler: MessageHandler | undefined;
     const postMessage = sinon.stub();
@@ -102,7 +105,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.resolves([]);
-            new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
 
             assert.doesNotThrow(() => emitter.fire(fakeConnection()));
             await flush();
@@ -112,7 +115,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('does not reload entities when the connection is cleared (undefined)', async () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
-            new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
 
             emitter.fire(undefined);
             await flush();
@@ -123,7 +126,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.resolves([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -140,7 +143,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('posts connectionState with connected:false and does not load entities when the connection is cleared', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -157,7 +160,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('enables scripts, scopes local resource roots, sets non-empty html, and registers a message handler', () => {
             const { cm } = makeConnectionManager();
             const { client } = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const { view, getHandler } = makeView();
 
             provider.resolveWebviewView(view as any);
@@ -178,7 +181,7 @@ describe('EntityExplorerWebviewProvider', () => {
         function setup(connState: Partial<{ isConnected: boolean; isRestoring: boolean }> = {}) {
             const connMgr = makeConnectionManager(connState);
             const clientFake = makeClient();
-            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const viewFake = makeView();
             provider.resolveWebviewView(viewFake.view as any);
             return { provider, ...connMgr, ...clientFake, ...viewFake };
@@ -307,6 +310,19 @@ describe('EntityExplorerWebviewProvider', () => {
             assert.ok(spy.calledWith('account', 'statuscode', 'Status Reason', 'Status'));
         });
 
+        it("'openRibbonEditor' delegates to the constructor-injected callback with the message payload", async () => {
+            const connMgr = makeConnectionManager();
+            const clientFake = makeClient();
+            const openRibbonEditor = sinon.stub();
+            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, openRibbonEditor);
+            const viewFake = makeView();
+            provider.resolveWebviewView(viewFake.view as any);
+
+            await viewFake.getHandler()({ type: 'openRibbonEditor', entityLogicalName: 'account', entityDisplayName: 'Account', ribbonLocation: 'HomepageGrid' });
+
+            assert.ok(openRibbonEditor.calledWith('account', 'Account', 'HomepageGrid'));
+        });
+
         it('ignores an unrecognized message type without throwing or posting', async () => {
             const { getHandler, postMessage } = setup();
             await assert.doesNotReject(async () => getHandler()({ type: 'somethingUnknown' }));
@@ -346,7 +362,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
             const showTextDocument = sinon.stub(vscodeMock.window, 'showTextDocument').resolves(undefined);
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(getAttributes.calledWith('account'));
@@ -369,7 +385,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const quickPick = sinon.stub(vscodeMock.window, 'showQuickPick');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(showError.calledWithMatch(/Failed to load fields: fields-down/));
@@ -383,7 +399,7 @@ describe('EntityExplorerWebviewProvider', () => {
             sinon.stub(vscodeMock.window, 'showQuickPick').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeInterface('account', 'Account');
 
             assert.strictEqual(openTextDocument.callCount, 0);
@@ -397,7 +413,7 @@ describe('EntityExplorerWebviewProvider', () => {
             sinon.stub(vscodeMock.window, 'showQuickPick').resolves([]);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeInterface('account', 'Account');
 
             assert.strictEqual(openTextDocument.callCount, 0);
@@ -412,7 +428,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(showError.calledWithMatch(/Failed to load option sets: options-down/));
@@ -430,7 +446,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
             const showTextDocument = sinon.stub(vscodeMock.window, 'showTextDocument').resolves(undefined);
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeEnum('account', 'statuscode', 'Status Reason', 'Status');
 
             assert.ok(getAttributeOptions.calledWith('account', 'statuscode', 'Status'));
@@ -449,7 +465,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             await provider.makeEnum('account', 'statuscode', 'Status Reason', 'Status');
 
             assert.ok(showError.calledWithMatch(/Failed to load option set: options-down/));
@@ -464,7 +480,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.resolves([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -479,7 +495,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.rejects(new Error('down'));
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 

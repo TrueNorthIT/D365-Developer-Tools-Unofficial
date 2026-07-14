@@ -91,6 +91,12 @@
         "command": "d365.configureMcp",
         "title": "Configure MCP Server for this Workspace",
         "category": "D365"
+      },
+      {
+        "command": "d365.editRibbon",
+        "title": "Edit Ribbon…",
+        "category": "D365",
+        "icon": "$(layout)"
       }
     ],
     "configuration": {
@@ -229,7 +235,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./ && node esbuild.mjs --production",
     "compile:webview": "node esbuild.mjs --production",
-    "check:webview": "tsc -p ./src/webview",
+    "check:webview": "tsc -p ./src/webview && tsc -p ./src/webview-ribbon",
     "watch": "concurrently -k -n ext,web \"npm:watch:ext\" \"npm:watch:web\"",
     "watch:ext": "tsc -watch -p ./",
     "watch:web": "node esbuild.mjs --watch",
