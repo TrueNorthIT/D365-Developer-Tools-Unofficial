@@ -636,11 +636,28 @@ describe('DataverseClient', () => {
             assert.strictEqual(result, undefined);
         });
 
-        it('returns undefined for a reference that is neither a $webresource: nor a relative path', async () => {
+        // A bare name (neither $webresource:-prefixed nor a relative system path) is how a custom
+        // ModernImage is stored -- resolved as a web resource lookup by name, same as the
+        // $webresource: case just without stripping a prefix first.
+        it('resolves a bare name (e.g. a custom ModernImage) via getWebResourceContentByName', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: 'QUJD' }] }) }));
             const client = new DataverseClient(fakeConnectionManager());
-            const result = await client.getRibbonImageContent('not-a-recognized-ref');
+
+            const result = await client.getRibbonImageContent('new_customicon');
+
+            assert.strictEqual(result, 'data:image/png;base64,QUJD');
+            const [url] = fetchStub.firstCall.args;
+            assert.ok(url.includes(`name eq 'new_customicon'`));
+        });
+
+        // Most ModernImage values are one of Dataverse's built-in Fluent icon names (e.g. "New",
+        // "Refresh") rather than a web resource -- the lookup above simply finds nothing for these.
+        it('returns undefined for a bare name that matches no web resource (e.g. a built-in Fluent icon name)', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('Refresh');
             assert.strictEqual(result, undefined);
-            assert.strictEqual(fetchStub.callCount, 0);
         });
     });
 });

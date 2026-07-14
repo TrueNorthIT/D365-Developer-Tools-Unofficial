@@ -68,7 +68,7 @@ export type LocalAction =
   | { type: 'local/select'; selection: Selection }
   | { type: 'local/updateTab'; id: string; title: string }
   | { type: 'local/updateGroup'; id: string; title: string }
-  | { type: 'local/updateControl'; id: string; patch: Partial<Pick<RibbonControl, 'label' | 'toolTipTitle' | 'toolTipDescription' | 'image16' | 'image32' | 'commandId'>> }
+  | { type: 'local/updateControl'; id: string; patch: Partial<Pick<RibbonControl, 'label' | 'toolTipTitle' | 'toolTipDescription' | 'image16' | 'image32' | 'modernImage' | 'commandId'>> }
   | { type: 'local/updateCommand'; id: string; patch?: Partial<Pick<RibbonCommandDefinition, 'enableRules' | 'displayRules'>>; action?: RibbonAction }
   | { type: 'local/updateRule'; ruleType: 'enable' | 'display'; id: string; xml: string }
   | { type: 'local/addTab' }

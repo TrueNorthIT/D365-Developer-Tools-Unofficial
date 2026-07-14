@@ -245,10 +245,14 @@ export class DataverseClient {
     }
 
     // Resolves a ribbon control's icon reference to a data: URI the webview can render directly.
-    // Two reference shapes appear in ribbon XML: `$webresource:<name>` (custom icons, resolved via
-    // the same web resource lookup table icons use) and a relative system path like
+    // Three reference shapes appear in ribbon XML: `$webresource:<name>` (custom icons, resolved via
+    // the same web resource lookup table icons use), a relative system path like
     // `/_imgs/ribbon/DeleteSelected_32.png` (built-in icons, fetched directly with the same
-    // bearer-token pattern as getSystemIconSvg). Returns undefined for anything else or on failure.
+    // bearer-token pattern as getSystemIconSvg), and a bare web resource name -- how a custom
+    // ModernImage (the modern/Unified Interface command bar's icon) is stored. Most ModernImage
+    // values are actually one of Dataverse's built-in Fluent icon names rather than a web resource,
+    // so that lookup simply finds nothing and this returns undefined, same as any other unresolvable
+    // reference or failed fetch.
     async getRibbonImageContent(ref: string): Promise<string | undefined> {
         if (ref.startsWith('$webresource:')) {
             const name = ref.slice('$webresource:'.length);
@@ -256,16 +260,19 @@ export class DataverseClient {
             return base64 ? `data:${mimeTypeFor(name)};base64,${base64}` : undefined;
         }
 
-        if (!ref.startsWith('/')) { return undefined; }
+        if (ref.startsWith('/')) {
+            const base = this.connectionManager.connection!.environmentUrl;
+            const token = await this.connectionManager.getAccessToken();
 
-        const base = this.connectionManager.connection!.environmentUrl;
-        const token = await this.connectionManager.getAccessToken();
+            const response = await fetch(`${base}${ref}`, { headers: { Authorization: `Bearer ${token}` } });
+            if (!response.ok) { return undefined; }
 
-        const response = await fetch(`${base}${ref}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!response.ok) { return undefined; }
+            const buf = Buffer.from(await response.arrayBuffer());
+            return `data:${mimeTypeFor(ref)};base64,${buf.toString('base64')}`;
+        }
 
-        const buf = Buffer.from(await response.arrayBuffer());
-        return `data:${mimeTypeFor(ref)};base64,${buf.toString('base64')}`;
+        const base64 = await this.getWebResourceContentByName(ref);
+        return base64 ? `data:${mimeTypeFor(ref)};base64,${base64}` : undefined;
     }
 
     async createWebResource(params: { name: string; displayName: string; type: number; contentBase64: string }): Promise<string> {

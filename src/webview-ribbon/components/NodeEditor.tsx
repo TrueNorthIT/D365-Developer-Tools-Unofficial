@@ -48,6 +48,7 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
       <label>Tooltip description<textarea value={control.toolTipDescription} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipDescription: e.target.value } })} /></label>
       <label>16×16 icon (web resource name or system path)<input type="text" value={control.image16 ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { image16: e.target.value } })} /></label>
       <label>32×32 icon (web resource name or system path)<input type="text" value={control.image32 ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { image32: e.target.value } })} /></label>
+      <label>Modern icon (web resource name, or a built-in Fluent icon name)<input type="text" value={control.modernImage ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { modernImage: e.target.value } })} /></label>
       <label>Command Id<input type="text" value={control.commandId ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { commandId: e.target.value } })} /></label>
 
       <CommandSection model={model} control={control} dispatch={dispatch} />

@@ -165,6 +165,7 @@ function parseControl(kind: RibbonControl['kind'], node: Record<string, unknown>
         toolTipDescription: resolveLabel(attr(node, 'ToolTipDescription'), locLabels),
         image16: attr(node, 'Image16by16'),
         image32: attr(node, 'Image32by32'),
+        modernImage: attr(node, 'ModernImage'),
         commandId: attr(node, 'Command'),
         controls: kind === 'FlyoutAnchor'
             ? parseMenuSections(asObj(node.Menu), locLabels)

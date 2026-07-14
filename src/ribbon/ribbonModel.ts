@@ -12,6 +12,11 @@ export interface RibbonControl {
     toolTipDescription: string;
     image16?: string;
     image32?: string;
+    /** A named icon reference for the modern (Unified Interface) command bar. Resolved the same way
+     *  as image16/image32 -- either a `$webresource:` reference or a bare web resource name -- but
+     *  most values are one of Dataverse's built-in Fluent icon names, which don't match any web
+     *  resource and simply have no icon to show. */
+    modernImage?: string;
     commandId?: string;
     /** FlyoutAnchor > Menu > MenuSection > Controls, or a MenuSection's own Controls. */
     controls?: RibbonControl[];

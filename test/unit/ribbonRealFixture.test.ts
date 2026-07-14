@@ -141,6 +141,12 @@ describe('ribbon loading against a real captured RetrieveEntityRibbon response',
             assert.ok(control.label.length > 0, `control '${control.id}' has an empty label`);
         }
 
+        // ModernImage -- the Unified Interface command bar's icon reference -- is captured
+        // alongside the classic Image16by16/Image32by32 pair rather than dropped.
+        const newRecord = managementGroup.controls.find(c => c.id === 'Mscrm.SubGrid.contact.NewRecord')!;
+        assert.ok(newRecord, 'expected the New Record button to be present');
+        assert.strictEqual(newRecord.modernImage, 'New');
+
         const flyout = managementGroup.controls.find(c => c.kind === 'FlyoutAnchor')!;
         assert.ok(flyout.controls?.length, 'expected the FlyoutAnchor to have a nested MenuSection');
         assert.strictEqual(flyout.controls![0].kind, 'MenuSection');

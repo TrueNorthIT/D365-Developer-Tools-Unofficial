@@ -128,6 +128,7 @@ function controlToObj(control: RibbonControl): Record<string, unknown> {
     if (control.toolTipDescription) { obj['@_ToolTipDescription'] = control.toolTipDescription; }
     if (control.image16) { obj['@_Image16by16'] = control.image16; }
     if (control.image32) { obj['@_Image32by32'] = control.image32; }
+    if (control.modernImage) { obj['@_ModernImage'] = control.modernImage; }
     if (control.commandId) { obj['@_Command'] = control.commandId; }
 
     const children = control.controls?.filter(c => c.status !== 'deleted') ?? [];

@@ -16,6 +16,7 @@ export interface RibbonControl {
   toolTipDescription: string;
   image16?: string;
   image32?: string;
+  modernImage?: string;
   commandId?: string;
   controls?: RibbonControl[];
   status: RibbonNodeStatus;

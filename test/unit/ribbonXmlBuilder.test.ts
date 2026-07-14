@@ -92,6 +92,13 @@ describe('buildRibbonDiffXml', () => {
         assert.match(xml, /<DisplayRules>[\s\S]*CustomRule[\s\S]*<\/DisplayRules>/);
     });
 
+    it('preserves a control\'s modernImage attribute', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].modernImage = 'Refresh';
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<Button Id="added_button"[^/]*ModernImage="Refresh"/);
+    });
+
     it('produces a well-formed top-level RibbonDiffXml document', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.ok(xml.startsWith('<RibbonDiffXml>'));
