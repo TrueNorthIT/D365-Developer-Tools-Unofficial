@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { RibbonRuleRaw } from '../protocol';
+import { WebResourceField } from './WebResourceField';
 import {
   APPLIES_TO_OPTIONS,
   CLIENT_TYPES,
@@ -251,7 +252,7 @@ function LeafFields({ condition, onChange }: { condition: RibbonRuleLeafConditio
     case 'CustomRule':
       return (
         <>
-          <TextField label="Library (web resource name)" value={condition.library} onChange={v => onChange({ ...condition, library: v })} />
+          <WebResourceField label="Library (web resource name)" value={condition.library} onChange={v => onChange({ ...condition, library: v })} />
           <TextField label="Function name" value={condition.functionName} onChange={v => onChange({ ...condition, functionName: v })} />
           <label>Parameters (comma-separated)
             <input

@@ -192,6 +192,24 @@ export class DataverseClient {
 
     // ── Web resources ─────────────────────────────────────────────────────
 
+    // Web resource name search-as-you-type (the Ribbon Editor's icon/library fields). Capped and
+    // ordered by name rather than paged through fetchPaged -- this backs a live autocomplete
+    // dropdown, not a full listing.
+    async searchWebResources(query: string): Promise<string[]> {
+        const trimmed = query.trim();
+        const escaped = trimmed.replace(/'/g, "''");
+        const url = this.apiUrl(
+            'webresourceset',
+            '$select=name',
+            '$orderby=name',
+            '$top=25',
+            ...(trimmed ? [`$filter=contains(name,'${escaped}')`] : []),
+        );
+
+        const data = await this.request<ODataResponse<{ name: string }>>(url);
+        return (data?.value ?? []).map(r => r.name);
+    }
+
     async getWebResourceIdByName(name: string): Promise<string | undefined> {
         const escaped = name.replace(/'/g, "''");
         const url = this.apiUrl(

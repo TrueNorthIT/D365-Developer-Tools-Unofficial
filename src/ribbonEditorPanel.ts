@@ -129,6 +129,8 @@ export class RibbonEditorPanel {
         switch (op) {
             case 'getIcon':
                 return this.getIconContent(params.ref as string);
+            case 'searchWebResources':
+                return this.client.searchWebResources(params.query as string);
             default:
                 throw new Error(`Unknown request op: ${op}`);
         }

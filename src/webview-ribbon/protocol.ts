@@ -80,6 +80,8 @@ export type OutboundMessage =
 export interface RpcRequestMap {
   /** Resolves a ribbon control's image16/image32 reference to a data: URI, or null if unresolvable. */
   getIcon: { params: { ref: string }; result: string | null };
+  /** Web resource names matching `query` (contains, case-insensitive per Dataverse's OData contains()), capped at 25, for the icon/library fields' search-as-you-type. */
+  searchWebResources: { params: { query: string }; result: string[] };
 }
 export type RpcOp = keyof RpcRequestMap;
 

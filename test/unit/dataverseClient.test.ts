@@ -352,6 +352,53 @@ describe('DataverseClient', () => {
         });
     });
 
+    // ── searchWebResources ───────────────────────────────────────────────
+
+    describe('searchWebResources', () => {
+        it('returns the matched web resource names in the order the server returned them', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ name: 'new_a.js' }, { name: 'new_b.js' }] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.searchWebResources('new_');
+            assert.deepStrictEqual(result, ['new_a.js', 'new_b.js']);
+        });
+
+        it('filters by a contains() on name, ordered by name and capped at 25', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.searchWebResources('icon');
+
+            const [url] = fetchStub.firstCall.args;
+            assert.match(url, /\$filter=contains\(name,'icon'\)/);
+            assert.match(url, /\$orderby=name/);
+            assert.match(url, /\$top=25/);
+        });
+
+        it('omits the filter entirely for an empty/whitespace-only query, still returning up to 25 results', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.searchWebResources('   ');
+
+            const [url] = fetchStub.firstCall.args;
+            assert.doesNotMatch(url, /\$filter=/);
+        });
+
+        it('escapes single quotes in the query by doubling them', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.searchWebResources("o'brien");
+
+            const [url] = fetchStub.firstCall.args;
+            assert.match(url, /\$filter=contains\(name,'o''brien'\)/);
+        });
+
+        it('returns an empty array when the response has no value', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({}) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.searchWebResources('new_');
+            assert.deepStrictEqual(result, []);
+        });
+    });
+
     // ── getWebResourceIdByName ───────────────────────────────────────────
 
     describe('getWebResourceIdByName', () => {

@@ -3,6 +3,7 @@ import type { RibbonAction, RibbonControl, RibbonModel, RibbonNodeStatus, Ribbon
 import { findControl, findGroup, findTab, type Action, type Selection } from '../ribbonState';
 import { parseRuleCondition, ruleConditionLabel } from '../ruleCondition';
 import { RuleDialog } from './RuleDialog';
+import { WebResourceField } from './WebResourceField';
 
 interface Props {
   model: RibbonModel;
@@ -48,9 +49,21 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
       <label>Label<input type="text" value={control.label} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { label: e.target.value } })} /></label>
       <label>Tooltip title<input type="text" value={control.toolTipTitle} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipTitle: e.target.value } })} /></label>
       <label>Tooltip description<textarea value={control.toolTipDescription} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { toolTipDescription: e.target.value } })} /></label>
-      <label>16×16 icon (web resource name or system path)<input type="text" value={control.image16 ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { image16: e.target.value } })} /></label>
-      <label>32×32 icon (web resource name or system path)<input type="text" value={control.image32 ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { image32: e.target.value } })} /></label>
-      <label>Modern icon (web resource name, or a built-in Fluent icon name)<input type="text" value={control.modernImage ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { modernImage: e.target.value } })} /></label>
+      <WebResourceField
+        label="16×16 icon (web resource name or system path)"
+        value={control.image16 ?? ''}
+        onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { image16: v } })}
+      />
+      <WebResourceField
+        label="32×32 icon (web resource name or system path)"
+        value={control.image32 ?? ''}
+        onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { image32: v } })}
+      />
+      <WebResourceField
+        label="Modern icon (web resource name, or a built-in Fluent icon name)"
+        value={control.modernImage ?? ''}
+        onChange={v => dispatch({ type: 'local/updateControl', id: control.id, patch: { modernImage: v } })}
+      />
       <label>Command Id<input type="text" value={control.commandId ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { commandId: e.target.value } })} /></label>
 
       <CommandSection model={model} control={control} dispatch={dispatch} />
@@ -103,16 +116,14 @@ function CommandSection({ model, control, dispatch }: { model: RibbonModel; cont
       {action?.type === 'Url' && <p className="hint">Action: URL → {action.address} (editing URL actions isn't supported yet — edit the JS fields below to replace it).</p>}
       {action?.type === 'Raw' && <p className="hint">Action preserved as-is (an advanced action type this editor doesn't model). Editing below replaces it with a JavaScript function.</p>}
 
-      <label>JS Library (web resource name)
-        <input
-          type="text"
-          value={action?.type === 'JavaScriptFunction' ? action.library : ''}
-          onChange={e => dispatch({
-            type: 'local/updateCommand', id: command.id,
-            action: jsAction(action, { library: e.target.value }),
-          })}
-        />
-      </label>
+      <WebResourceField
+        label="JS Library (web resource name)"
+        value={action?.type === 'JavaScriptFunction' ? action.library : ''}
+        onChange={v => dispatch({
+          type: 'local/updateCommand', id: command.id,
+          action: jsAction(action, { library: v }),
+        })}
+      />
       <label>Function name
         <input
           type="text"
