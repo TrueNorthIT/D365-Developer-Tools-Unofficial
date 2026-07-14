@@ -1,4 +1,6 @@
 import type { ConnectionManager } from './connectionManager';
+import { log } from './logger';
+import { decompressRibbonPayload } from './ribbon/decompressRibbon';
 
 // ── Dataverse OData response shapes ────────────────────────────────────────
 
@@ -89,6 +91,10 @@ export interface OptionValue {
     value: number;
     label: string;
 }
+
+// Mirrors (a useful subset of) the Microsoft.Dynamics.CRM.RibbonLocationFilters Web API enum —
+// 'All' merges every location, the other three scope the request to just that ribbon.
+export type RibbonLocationFilter = 'All' | 'Form' | 'HomepageGrid' | 'SubGrid';
 
 // ── Client ──────────────────────────────────────────────────────────────────
 
@@ -238,6 +244,30 @@ export class DataverseClient {
         return Buffer.from(svg, 'utf8').toString('base64');
     }
 
+    // Resolves a ribbon control's icon reference to a data: URI the webview can render directly.
+    // Two reference shapes appear in ribbon XML: `$webresource:<name>` (custom icons, resolved via
+    // the same web resource lookup table icons use) and a relative system path like
+    // `/_imgs/ribbon/DeleteSelected_32.png` (built-in icons, fetched directly with the same
+    // bearer-token pattern as getSystemIconSvg). Returns undefined for anything else or on failure.
+    async getRibbonImageContent(ref: string): Promise<string | undefined> {
+        if (ref.startsWith('$webresource:')) {
+            const name = ref.slice('$webresource:'.length);
+            const base64 = await this.getWebResourceContentByName(name);
+            return base64 ? `data:${mimeTypeFor(name)};base64,${base64}` : undefined;
+        }
+
+        if (!ref.startsWith('/')) { return undefined; }
+
+        const base = this.connectionManager.connection!.environmentUrl;
+        const token = await this.connectionManager.getAccessToken();
+
+        const response = await fetch(`${base}${ref}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) { return undefined; }
+
+        const buf = Buffer.from(await response.arrayBuffer());
+        return `data:${mimeTypeFor(ref)};base64,${buf.toString('base64')}`;
+    }
+
     async createWebResource(params: { name: string; displayName: string; type: number; contentBase64: string }): Promise<string> {
         const token = await this.connectionManager.getAccessToken();
         const url   = this.apiUrl('webresourceset');
@@ -290,6 +320,29 @@ export class DataverseClient {
                 AddRequiredComponents: false,
             },
         });
+    }
+
+    // ── Ribbon ────────────────────────────────────────────────────────────
+
+    // Retrieves the ribbon for an entity, scoped to a specific UI location — the same source
+    // Ribbon Workbench reads from. The response is a base64-encoded, compressed XML document
+    // (`<RibbonDefinitions><RibbonXml>…</RibbonXml><LocLabels>…</LocLabels></RibbonDefinitions>`) —
+    // see decompressRibbonPayload for why the compression format itself isn't assumed.
+    async getEntityRibbonXml(entityLogicalName: string, locationFilter: RibbonLocationFilter = 'All'): Promise<string> {
+        const url = this.apiUrl(
+            `RetrieveEntityRibbon(EntityName='${entityLogicalName}',RibbonLocationFilter=Microsoft.Dynamics.CRM.RibbonLocationFilters'${locationFilter}')`,
+        );
+        log(`DataverseClient.getEntityRibbonXml: GET ${url}`);
+
+        const data = await this.request<{ CompressedEntityXml: string }>(url);
+        const compressed = data?.CompressedEntityXml;
+        if (!compressed) { throw new Error(`No ribbon XML returned for entity '${entityLogicalName}'.`); }
+
+        const decompressed = decompressRibbonPayload(compressed);
+        const xml = decodeXmlBuffer(decompressed);
+        log(`DataverseClient.getEntityRibbonXml: ${compressed.length} base64 chars -> ${decompressed.length} decompressed bytes -> ${xml.length} chars decoded`);
+        log(`DataverseClient.getEntityRibbonXml: decoded XML preview: ${xml.slice(0, 300).replace(/\s+/g, ' ')}${xml.length > 300 ? '…' : ''}`);
+        return xml;
     }
 
     // ── Internals ─────────────────────────────────────────────────────────
@@ -352,6 +405,37 @@ export class DataverseClient {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// Ribbon XML exports aren't guaranteed to be UTF-8 (CRM's ribbon tooling frequently emits
+// UTF-16), so decode based on the BOM actually present rather than assuming one encoding.
+function decodeXmlBuffer(buf: Buffer): string {
+    if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+        return buf.subarray(2).toString('utf16le');
+    }
+    if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+        const swapped = Buffer.from(buf.subarray(2));
+        swapped.swap16();
+        return swapped.toString('utf16le');
+    }
+    if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+        return buf.subarray(3).toString('utf8');
+    }
+    return buf.toString('utf8');
+}
+
+const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+};
+
+function mimeTypeFor(pathOrName: string): string {
+    const match = /\.[a-z0-9]+$/i.exec(pathOrName);
+    return (match && MIME_TYPES_BY_EXTENSION[match[0].toLowerCase()]) || 'image/png';
+}
 
 function extractLabel(label: DataverseLabel | undefined): string {
     if (!label) { return ''; }

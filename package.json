@@ -270,6 +270,7 @@
   "dependencies": {
     "@azure/msal-node": "^3.8.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "fast-xml-parser": "^4.5.3",
     "zod": "^4.4.3"
   }
 }

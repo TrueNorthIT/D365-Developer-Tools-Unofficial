@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
+import * as zlib from 'zlib';
 import { DataverseClient } from '../../src/dataverseClient';
 import type { ConnectionManager } from '../../src/connectionManager';
 
@@ -21,6 +22,7 @@ interface FakeResponseInit {
     statusText?: string;
     json?: () => Promise<unknown>;
     text?: () => Promise<string>;
+    arrayBuffer?: () => Promise<ArrayBuffer>;
     headers?: Record<string, string | undefined>;
 }
 
@@ -32,6 +34,7 @@ function fakeResponse(init: FakeResponseInit = {}): Response {
         statusText: init.statusText ?? 'OK',
         json: init.json ?? (async () => ({})),
         text: init.text ?? (async () => ''),
+        arrayBuffer: init.arrayBuffer ?? (async () => new ArrayBuffer(0)),
         headers: {
             get: (name: string) => headersMap[name] ?? null,
         },
@@ -529,6 +532,115 @@ describe('DataverseClient', () => {
                 SolutionUniqueName: 'MySolution',
                 AddRequiredComponents: false,
             });
+        });
+    });
+
+    // ── getEntityRibbonXml ───────────────────────────────────────────────
+
+    describe('getEntityRibbonXml', () => {
+        it('defaults to RibbonLocationFilter=All when no location filter is given, and decompresses the result', async () => {
+            const xml = '<RibbonDefinitions><RibbonXml><Tabs/></RibbonXml></RibbonDefinitions>';
+            const compressed = zlib.gzipSync(Buffer.from(xml, 'utf8')).toString('base64');
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ CompressedEntityXml: compressed }) }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityRibbonXml('account');
+
+            assert.strictEqual(fetchStub.callCount, 1);
+            const [url] = fetchStub.firstCall.args;
+            assert.strictEqual(
+                url,
+                `${ENV_URL}/api/data/v9.2/RetrieveEntityRibbon(EntityName='account',RibbonLocationFilter=Microsoft.Dynamics.CRM.RibbonLocationFilters'All')`,
+            );
+            assert.strictEqual(result, xml);
+        });
+
+        for (const locationFilter of ['Form', 'HomepageGrid', 'SubGrid'] as const) {
+            it(`scopes the request to RibbonLocationFilter=${locationFilter} when given`, async () => {
+                const xml = '<RibbonDefinitions><RibbonXml><Tabs/></RibbonXml></RibbonDefinitions>';
+                const compressed = zlib.gzipSync(Buffer.from(xml, 'utf8')).toString('base64');
+                fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ CompressedEntityXml: compressed }) }));
+
+                const client = new DataverseClient(fakeConnectionManager());
+                await client.getEntityRibbonXml('account', locationFilter);
+
+                const [url] = fetchStub.firstCall.args;
+                assert.strictEqual(
+                    url,
+                    `${ENV_URL}/api/data/v9.2/RetrieveEntityRibbon(EntityName='account',RibbonLocationFilter=Microsoft.Dynamics.CRM.RibbonLocationFilters'${locationFilter}')`,
+                );
+            });
+        }
+
+        it('decodes a UTF-16LE (BOM) decompressed payload correctly', async () => {
+            const xml = '<RibbonDefinitions><RibbonXml><Tabs/></RibbonXml></RibbonDefinitions>';
+            const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]);
+            const compressed = zlib.gzipSync(utf16).toString('base64');
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ CompressedEntityXml: compressed }) }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityRibbonXml('account');
+
+            assert.strictEqual(result, xml);
+        });
+
+        it('throws when no CompressedEntityXml is returned', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({}) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await assert.rejects(() => client.getEntityRibbonXml('account'), /No ribbon XML returned/);
+        });
+    });
+
+    // ── getRibbonImageContent ──────────────────────────────────────────────
+
+    describe('getRibbonImageContent', () => {
+        it('resolves a $webresource: reference via getWebResourceContentByName and wraps it as a data URI', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: 'QUJD' }] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('$webresource:new_icon.png');
+
+            assert.strictEqual(result, 'data:image/png;base64,QUJD');
+            const [url] = fetchStub.firstCall.args;
+            assert.ok(url.includes(`name eq 'new_icon.png'`));
+        });
+
+        it('returns undefined when the $webresource: reference does not exist', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('$webresource:missing.png');
+            assert.strictEqual(result, undefined);
+        });
+
+        it('fetches a relative system icon path directly with a bearer token and wraps it as a data URI', async () => {
+            // TextEncoder allocates a dedicated (non-pooled) ArrayBuffer, so this exactly matches the
+            // 'hello' bytes -- Buffer.from(string) can return a view into Node's shared 8KB pool,
+            // which would make response.arrayBuffer() include unrelated bytes.
+            fetchStub.resolves(fakeResponse({ arrayBuffer: async () => new TextEncoder().encode('hello').buffer }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('/_imgs/ribbon/DeleteSelected_32.png');
+
+            assert.strictEqual(result, `data:image/png;base64,${Buffer.from('hello').toString('base64')}`);
+            const [url, init] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/_imgs/ribbon/DeleteSelected_32.png`);
+            assert.strictEqual(init.headers.Authorization, `Bearer ${TOKEN}`);
+        });
+
+        it('returns undefined when the system icon fetch is not ok', async () => {
+            fetchStub.resolves(fakeResponse({ ok: false, status: 404 }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('/_imgs/ribbon/Missing_32.png');
+            assert.strictEqual(result, undefined);
+        });
+
+        it('returns undefined for a reference that is neither a $webresource: nor a relative path', async () => {
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getRibbonImageContent('not-a-recognized-ref');
+            assert.strictEqual(result, undefined);
+            assert.strictEqual(fetchStub.callCount, 0);
         });
     });
 });
