@@ -82,13 +82,25 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
 /* ── Body: ribbon preview + editor split ── */
 #ribbon-body { flex: 1 1 auto; min-height: 0; display: flex; }
 
-/* ── Ribbon preview (tab strip + groups + button tiles) ── */
+/* ── Ribbon preview (tab strip + groups + button tiles) ──
+   The pane and tab strip follow the VS Code theme like the rest of the editor. Groups that wrap
+   onto the same row (a "line") share one floating "ribbon" -- a fixed light-grey card with a shadow
+   and rounded corners, matching the real Dynamics ribbon -- rather than either one continuous
+   surface behind every group regardless of row, or a separate card per group. RibbonGroupLines
+   (RibbonPreview.tsx) measures which groups actually landed on the same row and renders
+   .ribbon-line-bg rectangles behind them accordingly; .ribbon-group itself has no background of its
+   own. Most ribbon icons are black/dark raster assets designed for that light card background and
+   disappear against a dark editor theme, so text inside a card is pinned to match rather than left
+   as a --vscode-* variable; each group's caption sits below its own group in normal flow -- outside
+   the rectangle, which only covers the button area -- so it uses the surrounding theme instead. */
 .ribbon-preview {
   flex: 1 1 60%;
   min-width: 0;
   overflow-y: auto;
   border-right: 1px solid var(--vscode-panel-border);
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+  padding: 14px;
 }
 .ribbon-preview-empty { padding: 16px; color: var(--vscode-descriptionForeground); font-size: 12px; }
 
@@ -96,8 +108,9 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 6px 8px 0;
+  padding: 0 0 8px;
   border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 10px;
 }
 .ribbon-tab {
   padding: 5px 12px;
@@ -113,19 +126,61 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
 .ribbon-tab.active { border-bottom-color: var(--vscode-focusBorder, #007acc); font-weight: 600; }
 
 .ribbon-groups {
+  position: relative;
+  z-index: 0; /* contains .ribbon-line-bg's negative z-index to this stacking context only */
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 1px;
-  padding: 8px;
+  gap: 14px;
 }
-.ribbon-group {
+.ribbon-line-bg {
+  position: absolute;
+  z-index: -1;
+  background: #f3f2f1;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+/* A stark light-grey card reads as jarringly bright floating in a dark editor -- use a dark grey
+   instead under a dark theme, matching how src/webview/styles.css inverts entity icons below. */
+body.vscode-dark .ribbon-line-bg,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-line-bg {
+  background: #3a3a3a;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.ribbon-group-block {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--vscode-panel-border);
-  padding: 6px 10px 4px;
+  align-items: center;
+  gap: 4px;
+}
+.ribbon-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: #1b1b1b;
+  padding: 6px 10px;
   min-width: 90px;
 }
+body.vscode-dark .ribbon-group,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-group { color: #f3f2f1; }
+/* A divider between groups that share a line's ribbon -- distinguishes them as separate sections
+   without cutting the shared .ribbon-line-bg rectangle itself into pieces (see dividerAfter in
+   RibbonGroupLines). A pseudo-element rather than a border so it can stop short of the full height
+   (2/3, vertically centered) instead of touching the rectangle's top/bottom edges. The last group
+   in a line has no divider, so it sits flush with the rectangle's own right edge. */
+.ribbon-group.has-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  height: 66%;
+  width: 1px;
+  background: #c8c6c4;
+}
+body.vscode-dark .ribbon-group.has-divider::after,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-group.has-divider::after { background: #5a5a5a; }
 .ribbon-group-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -134,20 +189,22 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
   min-height: 66px;
 }
 .ribbon-group-caption {
-  margin-top: 4px;
-  padding: 3px 4px;
+  padding: 2px 4px;
   background: none;
   border: none;
-  border-top: 1px solid transparent;
-  color: var(--vscode-descriptionForeground);
+  /* var(--vscode-descriptionForeground) alone read as too dim/muted here -- using the full
+     foreground color at reduced opacity instead keeps it theme-adaptive (works in any theme,
+     including high contrast) while sitting a bit brighter than the description color. */
+  color: var(--vscode-foreground);
+  opacity: 0.9;
   font-size: 11px;
   text-align: center;
   cursor: pointer;
   white-space: nowrap;
 }
 .ribbon-group-caption:hover, .ribbon-group-caption.selected {
-  background: var(--vscode-list-hoverBackground);
-  color: var(--vscode-foreground);
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .ribbon-button-tile {
@@ -162,13 +219,23 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
   background: none;
   border: 1px solid transparent;
   cursor: pointer;
-  color: var(--vscode-foreground);
+  color: #1b1b1b;
 }
-.ribbon-button-tile:hover { background: var(--vscode-list-hoverBackground); }
+.ribbon-button-tile:hover { background: #e1dfdd; }
 .ribbon-button-tile.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
-  border-color: var(--vscode-focusBorder, #007acc);
+  background: #cce4f7;
+  color: #1b1b1b;
+  border-color: #0078d4;
+}
+body.vscode-dark .ribbon-button-tile,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-button-tile { color: #f3f2f1; }
+body.vscode-dark .ribbon-button-tile:hover,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-button-tile:hover { background: #4a4a4a; }
+body.vscode-dark .ribbon-button-tile.selected,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-button-tile.selected {
+  background: #264f78;
+  color: #f3f2f1;
+  border-color: #3794ff;
 }
 .ribbon-button-label {
   width: 100%;
@@ -186,8 +253,23 @@ button, select, input, textarea { font-family: inherit; font-size: inherit; }
 .ribbon-icon-slot { display: inline-block; width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
 .ribbon-icon-slot.placeholder {
   display: inline-block;
-  background: var(--vscode-input-background);
-  border: 1px dashed var(--vscode-panel-border);
+  background: #e1dfdd;
+  border: 1px dashed #c8c6c4;
+}
+body.vscode-dark .ribbon-icon-slot.placeholder,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-icon-slot.placeholder {
+  background: #4a4a4a;
+  border-color: #6a6a6a;
+}
+
+/* Ribbon icons are drawn for a light background (like the entity icons in
+   src/webview/styles.css), so the many that are black/dark line art disappear against the dark
+   card above -- invert only those under a dark theme to keep them legible. The `mono` class (set
+   by RibbonIcon.tsx via isMonochromeImage) identifies which icons are actually monochrome, so the
+   handful that already have color are left alone rather than inverted/hue-shifted too. */
+body.vscode-dark img.ribbon-icon-slot.mono,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.mono {
+  filter: invert(1);
 }
 
 /* Left-border status accent, reused across tabs/groups/buttons. */
