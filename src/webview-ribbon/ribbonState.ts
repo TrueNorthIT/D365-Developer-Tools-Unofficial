@@ -78,7 +78,8 @@ export type LocalAction =
   | { type: 'local/createCommandForControl'; controlId: string }
   | { type: 'local/addRuleToCommand'; commandId: string; ruleType: 'enable' | 'display' }
   | { type: 'local/removeRuleFromCommand'; commandId: string; ruleType: 'enable' | 'display'; ruleId: string }
-  | { type: 'local/deleteSelected' };
+  | { type: 'local/deleteSelected' }
+  | { type: 'local/reorderControl'; groupId: string; controlId: string; beforeControlId: string | null };
 
 export type Action = InboundMessage | LocalAction;
 
@@ -215,6 +216,24 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
                 const idx = list.findIndex(r => r.id === action.ruleId);
                 if (idx !== -1) { list.splice(idx, 1); }
             }
+            break;
+        }
+        case 'local/reorderControl': {
+            const found = findGroup(model, action.groupId);
+            if (!found) { break; }
+            const arr = found.group.controls;
+            const control = arr.find(c => c.id === action.controlId);
+            if (!control || action.controlId === action.beforeControlId) { break; }
+
+            const rest = arr.filter(c => c.id !== action.controlId);
+            const insertIndex = action.beforeControlId ? rest.findIndex(c => c.id === action.beforeControlId) : -1;
+            const reordered = insertIndex === -1
+                ? [...rest, control]
+                : [...rest.slice(0, insertIndex), control, ...rest.slice(insertIndex)];
+            if (reordered.every((c, i) => c === arr[i])) { break; } // dropped back where it started
+
+            touch(control);
+            found.group.controls = reordered;
             break;
         }
         case 'local/deleteSelected': {

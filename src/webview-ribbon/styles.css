@@ -222,6 +222,18 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) .ribbon-group.has-div
   color: #1b1b1b;
 }
 .ribbon-button-tile:hover { background: #e1dfdd; }
+.ribbon-button-tile.dragging { opacity: 0.4; }
+
+/* Rendered as an actual flex sibling at the exact array position a drop would land (see
+   GroupButtons in RibbonPreview.tsx), not a border on some tile -- so it always sits in the gap
+   between the two tiles the dragged button would end up between. */
+.ribbon-drop-indicator {
+  align-self: stretch;
+  width: 3px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--vscode-focusBorder, #0078d4);
+}
 .ribbon-button-tile.selected {
   background: #cce4f7;
   color: #1b1b1b;

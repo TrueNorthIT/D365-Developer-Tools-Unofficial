@@ -166,3 +166,58 @@ describe('ribbonState reducer: removeRuleFromCommand', () => {
         assert.strictEqual(next.model!.enableRules.length, 1);
     });
 });
+
+describe('ribbonState reducer: reorderControl', () => {
+    it('moves the control before the target and marks only the moved control modified', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.with.command', beforeControlId: 'btn.no.command' });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
+        assert.strictEqual(controls[0].status, 'modified');
+        assert.strictEqual(controls[1].status, 'unchanged');
+    });
+
+    it('appends to the end when beforeControlId is null', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.no.command', beforeControlId: null });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
+    });
+
+    it('does nothing when dropped back at its original position', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.no.command', beforeControlId: 'btn.with.command' });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.no.command', 'btn.with.command']);
+        assert.ok(controls.every(c => c.status === 'unchanged'), 'no-op reorder should not touch sibling statuses');
+    });
+
+    it('does nothing when controlId equals beforeControlId', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.no.command', beforeControlId: 'btn.no.command' });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.no.command', 'btn.with.command']);
+        assert.ok(controls.every(c => c.status === 'unchanged'));
+    });
+
+    it('does nothing when the group id is not found', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/reorderControl', groupId: 'does.not.exist', controlId: 'btn.no.command', beforeControlId: null });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.no.command', 'btn.with.command']);
+    });
+
+    it('leaves deleted siblings untouched while reordering the rest', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.deleted', label: 'Gone', toolTipTitle: '', toolTipDescription: '', status: 'deleted' });
+        const next = reducer(stateWithModel(model), { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.with.command', beforeControlId: 'btn.no.command' });
+
+        const deleted = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.deleted')!;
+        assert.strictEqual(deleted.status, 'deleted');
+    });
+});

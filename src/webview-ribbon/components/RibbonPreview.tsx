@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import type { RibbonControl, RibbonGroup, RibbonModel, RibbonNodeStatus, RibbonTab } from '../protocol';
 import { displayText, locationOf, type Location, type Selection } from '../ribbonState';
 import { RibbonIcon } from './RibbonIcon';
@@ -10,12 +10,13 @@ interface Props {
   onActiveTabChange: (tabId: string) => void;
   selection: Selection;
   onSelect: (selection: Selection) => void;
+  onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
 }
 
 // Renders the ribbon roughly as it appears in Dynamics itself: a tab strip, then the active tab's
 // groups as bordered boxes containing icon+label button tiles — replacing the earlier plain text
 // tree, which was unusable once real data showed up (hundreds of buttons/commands/rules at once).
-export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect }: Props) {
+export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl }: Props) {
   const visibleTabs = model.tabs.filter(t => t.status !== 'deleted' && (location === 'All' || locationOf(t.id) === location));
   const activeTab = visibleTabs.find(t => t.id === activeTabId) ?? visibleTabs[0];
 
@@ -51,6 +52,7 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
             onSelect={onSelect}
             activeTabId={activeTab!.id}
             onControlSelect={(groupId, controlId) => onSelect({ kind: 'control', tabId: activeTab!.id, groupId, id: controlId })}
+            onReorderControl={onReorderControl}
           />
         )}
     </div>
@@ -68,12 +70,13 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
 // Recomputed on mount/group-set change and on resize (a ResizeObserver, since the panel itself can
 // be resized, changing how many groups fit per row) -- there's no way to ask CSS which row a
 // flex-wrap item landed in, so this measures the real DOM after layout.
-function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect }: {
+function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect, onReorderControl }: {
   groups: RibbonGroup[];
   selection: Selection;
   onSelect: (selection: Selection) => void;
   activeTabId: string;
   onControlSelect: (groupId: string, controlId: string) => void;
+  onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupElements = useRef(new Map<string, HTMLDivElement>());
@@ -144,16 +147,13 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
               else { groupElements.current.delete(group.id); }
             }}
           >
-            <div className="ribbon-group-buttons">
-              {group.controls.filter(c => c.status !== 'deleted').map(control => (
-                <ButtonTile
-                  key={control.id}
-                  control={control}
-                  selected={selection?.kind === 'control' && selection.id === control.id}
-                  onSelect={() => onControlSelect(group.id, control.id)}
-                />
-              ))}
-            </div>
+            <GroupButtons
+              groupId={group.id}
+              controls={group.controls.filter(c => c.status !== 'deleted')}
+              selection={selection}
+              onControlSelect={onControlSelect}
+              onReorderControl={onReorderControl}
+            />
           </div>
           <button
             type="button"
@@ -169,14 +169,110 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
   );
 }
 
-function ButtonTile({ control, selected, onSelect }: { control: RibbonControl; selected: boolean; onSelect: () => void }) {
+// Native HTML5 drag-and-drop, scoped to reordering within a single group -- dragging a tile over a
+// different group's buttons is simply not wired up (no onDragOver there), so the browser shows a
+// "no drop" cursor and onReorderControl is never called across groups.
+//
+// insertBeforeId is exactly the `beforeControlId` that would be sent to onReorderControl right now
+// -- a real control id to land before, or null to land at the end -- so the drop-indicator bar is
+// rendered as an actual flex sibling at that same position (flatMap below) rather than a border
+// drawn on some tile, guaranteeing the indicator can never point somewhere other than where the
+// drop will actually land. undefined (vs. null) means "no drag in progress over this group yet",
+// so no bar renders until the pointer actually moves over it.
+function GroupButtons({ groupId, controls, selection, onControlSelect, onReorderControl }: {
+  groupId: string;
+  controls: RibbonControl[];
+  selection: Selection;
+  onControlSelect: (groupId: string, controlId: string) => void;
+  onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
+}) {
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [insertBeforeId, setInsertBeforeId] = useState<string | null | undefined>(undefined);
+
+  const endDrag = () => {
+    setDraggingId(null);
+    setInsertBeforeId(undefined);
+  };
+
+  const commitDrop = () => {
+    if (!draggingId) { return; }
+    onReorderControl(groupId, draggingId, insertBeforeId ?? null);
+    endDrag();
+  };
+
+  return (
+    <div
+      className="ribbon-group-buttons"
+      onDragOver={e => {
+        if (!draggingId) { return; }
+        e.preventDefault();
+        if ((e.target as HTMLElement).closest('.ribbon-button-tile') === null) {
+          setInsertBeforeId(null); // hovering empty space in the group -> land at the end
+        }
+      }}
+      onDrop={e => { if (!draggingId) { return; } e.preventDefault(); commitDrop(); }}
+    >
+      {controls.flatMap((control, i) => {
+        const nodes = [];
+        if (draggingId && insertBeforeId === control.id) {
+          nodes.push(<span key={`drop-${control.id}`} className="ribbon-drop-indicator" />);
+        }
+        nodes.push(
+          <ButtonTile
+            key={control.id}
+            control={control}
+            selected={selection?.kind === 'control' && selection.id === control.id}
+            onSelect={() => onControlSelect(groupId, control.id)}
+            dragging={draggingId === control.id}
+            onDragStart={() => { setDraggingId(control.id); setInsertBeforeId(undefined); }}
+            onDragEnd={endDrag}
+            onDragOverTile={e => {
+              if (!draggingId) { return; }
+              e.preventDefault(); // always allow the drop here, even over the dragged tile itself -- otherwise the browser shows a "not allowed" cursor while passing over its own source
+              e.stopPropagation();
+              if (draggingId === control.id) { return; } // ambiguous relative to itself -- leave insertBeforeId at the last real target instead of guessing
+              const rect = e.currentTarget.getBoundingClientRect();
+              const before = e.clientX - rect.left < rect.width / 2;
+              setInsertBeforeId(before ? control.id : (controls[i + 1]?.id ?? null));
+            }}
+            onDropOnTile={e => { if (!draggingId) { return; } e.preventDefault(); e.stopPropagation(); commitDrop(); }}
+          />,
+        );
+        return nodes;
+      })}
+      {draggingId && insertBeforeId === null && <span key="drop-end" className="ribbon-drop-indicator" />}
+    </div>
+  );
+}
+
+function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDragEnd, onDragOverTile, onDropOnTile }: {
+  control: RibbonControl;
+  selected: boolean;
+  onSelect: () => void;
+  dragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOverTile: (e: DragEvent<HTMLButtonElement>) => void;
+  onDropOnTile: (e: DragEvent<HTMLButtonElement>) => void;
+}) {
   const hasChevron = control.kind === 'SplitButton' || control.kind === 'FlyoutAnchor';
   const label = displayText(control.label, control.id);
+  const dragClass = dragging ? ' dragging' : '';
   return (
     <button
       type="button"
-      className={'ribbon-button-tile' + (selected ? ' selected' : '') + statusSuffix(control.status)}
+      draggable
+      className={'ribbon-button-tile' + (selected ? ' selected' : '') + statusSuffix(control.status) + dragClass}
       onClick={onSelect}
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', control.id);
+        e.dataTransfer.setDragImage(e.currentTarget, 0, 0); // cursor sits at the ghost's top-left corner, not centered on it
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOverTile}
+      onDrop={onDropOnTile}
       title={control.toolTipTitle || control.label || control.id}
     >
       <RibbonIcon modernImage={control.modernImage} image={control.image32 ?? control.image16} alt="" />

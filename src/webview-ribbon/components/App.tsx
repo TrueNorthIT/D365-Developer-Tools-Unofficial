@@ -61,6 +61,7 @@ export function App() {
           onActiveTabChange={setActiveTabId}
           selection={state.selection}
           onSelect={selection => dispatch({ type: 'local/select', selection })}
+          onReorderControl={(groupId, controlId, beforeControlId) => dispatch({ type: 'local/reorderControl', groupId, controlId, beforeControlId })}
         />
         <NodeEditor model={model} selection={state.selection} dispatch={dispatch} />
       </div>
