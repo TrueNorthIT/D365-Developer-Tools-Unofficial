@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type DragEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import type { RibbonControl, RibbonGroup, RibbonModel, RibbonNodeStatus, RibbonTab } from '../protocol';
 import { displayText, locationOf, type Location, type Selection } from '../ribbonState';
 import { RibbonIcon } from './RibbonIcon';
@@ -11,12 +11,15 @@ interface Props {
   selection: Selection;
   onSelect: (selection: Selection) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
+  onHideControl: (controlId: string) => void;
+  onDeleteControl: (controlId: string) => void;
 }
 
 // Renders the ribbon roughly as it appears in Dynamics itself: a tab strip, then the active tab's
 // groups as bordered boxes containing icon+label button tiles — replacing the earlier plain text
 // tree, which was unusable once real data showed up (hundreds of buttons/commands/rules at once).
-export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl }: Props) {
+export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onHideControl, onDeleteControl }: Props) {
+  const [ctxMenu, setCtxMenu] = useState<{ control: RibbonControl; x: number; y: number } | null>(null);
   const visibleTabs = model.tabs.filter(t => t.status !== 'deleted' && (location === 'All' || locationOf(t.id) === location));
   const activeTab = visibleTabs.find(t => t.id === activeTabId) ?? visibleTabs[0];
 
@@ -53,8 +56,23 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
             activeTabId={activeTab!.id}
             onControlSelect={(groupId, controlId) => onSelect({ kind: 'control', tabId: activeTab!.id, groupId, id: controlId })}
             onReorderControl={onReorderControl}
+            onControlContextMenu={(groupId, control, x, y) => {
+              onSelect({ kind: 'control', tabId: activeTab!.id, groupId, id: control.id });
+              setCtxMenu({ control, x, y });
+            }}
           />
         )}
+
+      {ctxMenu && (
+        <ButtonContextMenu
+          control={ctxMenu.control}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onHide={onHideControl}
+          onDelete={onDeleteControl}
+        />
+      )}
     </div>
   );
 }
@@ -70,13 +88,14 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
 // Recomputed on mount/group-set change and on resize (a ResizeObserver, since the panel itself can
 // be resized, changing how many groups fit per row) -- there's no way to ask CSS which row a
 // flex-wrap item landed in, so this measures the real DOM after layout.
-function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect, onReorderControl }: {
+function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect, onReorderControl, onControlContextMenu }: {
   groups: RibbonGroup[];
   selection: Selection;
   onSelect: (selection: Selection) => void;
   activeTabId: string;
   onControlSelect: (groupId: string, controlId: string) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
+  onControlContextMenu: (groupId: string, control: RibbonControl, x: number, y: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupElements = useRef(new Map<string, HTMLDivElement>());
@@ -149,10 +168,11 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
           >
             <GroupButtons
               groupId={group.id}
-              controls={group.controls.filter(c => c.status !== 'deleted')}
+              controls={group.controls}
               selection={selection}
               onControlSelect={onControlSelect}
               onReorderControl={onReorderControl}
+              onControlContextMenu={onControlContextMenu}
             />
           </div>
           <button
@@ -179,12 +199,13 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
 // drawn on some tile, guaranteeing the indicator can never point somewhere other than where the
 // drop will actually land. undefined (vs. null) means "no drag in progress over this group yet",
 // so no bar renders until the pointer actually moves over it.
-function GroupButtons({ groupId, controls, selection, onControlSelect, onReorderControl }: {
+function GroupButtons({ groupId, controls, selection, onControlSelect, onReorderControl, onControlContextMenu }: {
   groupId: string;
   controls: RibbonControl[];
   selection: Selection;
   onControlSelect: (groupId: string, controlId: string) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
+  onControlContextMenu: (groupId: string, control: RibbonControl, x: number, y: number) => void;
 }) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [insertBeforeId, setInsertBeforeId] = useState<string | null | undefined>(undefined);
@@ -236,6 +257,10 @@ function GroupButtons({ groupId, controls, selection, onControlSelect, onReorder
               setInsertBeforeId(before ? control.id : (controls[i + 1]?.id ?? null));
             }}
             onDropOnTile={e => { if (!draggingId) { return; } e.preventDefault(); e.stopPropagation(); commitDrop(); }}
+            onContextMenu={e => {
+              e.preventDefault();
+              onControlContextMenu(groupId, control, e.clientX, e.clientY);
+            }}
           />,
         );
         return nodes;
@@ -245,7 +270,7 @@ function GroupButtons({ groupId, controls, selection, onControlSelect, onReorder
   );
 }
 
-function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDragEnd, onDragOverTile, onDropOnTile }: {
+function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDragEnd, onDragOverTile, onDropOnTile, onContextMenu }: {
   control: RibbonControl;
   selected: boolean;
   onSelect: () => void;
@@ -254,6 +279,7 @@ function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDrag
   onDragEnd: () => void;
   onDragOverTile: (e: DragEvent<HTMLButtonElement>) => void;
   onDropOnTile: (e: DragEvent<HTMLButtonElement>) => void;
+  onContextMenu: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const hasChevron = control.kind === 'SplitButton' || control.kind === 'FlyoutAnchor';
   const label = displayText(control.label, control.id);
@@ -264,6 +290,7 @@ function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDrag
       draggable
       className={'ribbon-button-tile' + (selected ? ' selected' : '') + statusSuffix(control.status) + dragClass}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       onDragStart={e => {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', control.id);
@@ -283,6 +310,79 @@ function ButtonTile({ control, selected, onSelect, dragging, onDragStart, onDrag
 
 function statusSuffix(status: RibbonNodeStatus): string {
   return status === 'unchanged' ? '' : ` status-${status}`;
+}
+
+// Right-click menu for a single button tile, acting on whichever control was right-clicked rather
+// than requiring it to already be selected. Follows the same dismiss-on-outside-click/scroll/Escape
+// pattern as the entity explorer's ContextMenu (src/webview/components/ContextMenu.tsx) -- kept
+// local to this file rather than shared since the two menus have no target/action shape in common
+// beyond that dismissal behavior.
+//
+// Hide and Delete are two separate, individually-disabled actions rather than one combined toggle
+// (unlike the toolbar's generic "Delete / Restore" button) because only one is ever actually valid
+// for a given control: Dataverse can't truly delete a built-in ribbon button, only hide it (a
+// HideCustomAction on export), so Delete is disabled for anything except a control added this
+// session; conversely "hiding" a not-yet-published addition has no real server-side element to hide,
+// so Hide is disabled for those. See hideControl/deleteControl in ribbonState.ts.
+function ButtonContextMenu({ control, x, y, onClose, onHide, onDelete }: {
+  control: RibbonControl;
+  x: number;
+  y: number;
+  onClose: () => void;
+  onHide: (controlId: string) => void;
+  onDelete: (controlId: string) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) { return; }
+    const r = menu.getBoundingClientRect();
+    setPos({
+      x: x + r.width > window.innerWidth ? Math.max(0, x - r.width) : x,
+      y: y + r.height > window.innerHeight ? Math.max(0, y - r.height) : y,
+    });
+  }, [x, y]);
+
+  useLayoutEffect(() => {
+    const closeOnOutsideClick = (e: globalThis.MouseEvent) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) { return; }
+      onClose();
+    };
+    const close = () => onClose();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { onClose(); } };
+    document.addEventListener('click', closeOnOutsideClick);
+    document.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', closeOnOutsideClick);
+      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const isAdded = control.status === 'added';
+  return (
+    <div className="ribbon-ctx-menu" ref={menuRef} style={{ left: pos.x, top: pos.y }}>
+      <button
+        type="button"
+        disabled={isAdded}
+        title={isAdded ? 'Not yet published -- nothing to hide' : undefined}
+        onClick={() => { onClose(); onHide(control.id); }}
+      >
+        {control.status === 'deleted' ? 'Restore' : 'Hide'}
+      </button>
+      <button
+        type="button"
+        disabled={!isAdded}
+        title={!isAdded ? "Built-in buttons can't be deleted, only hidden" : undefined}
+        onClick={() => { onClose(); onDelete(control.id); }}
+      >
+        Delete
+      </button>
+    </div>
+  );
 }
 
 // Re-exported so App.tsx can compute the set of locations actually present without re-deriving the

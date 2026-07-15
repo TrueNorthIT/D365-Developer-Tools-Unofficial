@@ -221,3 +221,77 @@ describe('ribbonState reducer: reorderControl', () => {
         assert.strictEqual(deleted.status, 'deleted');
     });
 });
+
+describe('ribbonState reducer: hideControl', () => {
+    it('marks an unchanged control deleted (hidden via HideCustomAction on export)', () => {
+        const next = reducer(stateWithModel(baseModel()), { type: 'local/hideControl', controlId: 'btn.no.command' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        assert.strictEqual(control.status, 'deleted');
+    });
+
+    it('restores a deleted control back to unchanged', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].status = 'deleted';
+        const next = reducer(stateWithModel(model), { type: 'local/hideControl', controlId: 'btn.no.command' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        assert.strictEqual(control.status, 'unchanged');
+    });
+
+    it('does nothing to a control added this session -- nothing published yet to hide', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added' });
+        const next = reducer(stateWithModel(model), { type: 'local/hideControl', controlId: 'btn.new' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.new')!;
+        assert.strictEqual(control.status, 'added');
+    });
+
+    it('does not depend on the current selection -- acts on whichever control id is passed', () => {
+        const state = { ...stateWithModel(baseModel()), selection: { kind: 'control' as const, tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', id: 'btn.with.command' } };
+        const next = reducer(state, { type: 'local/hideControl', controlId: 'btn.no.command' });
+
+        const toggled = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        const untouched = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.with.command')!;
+        assert.strictEqual(toggled.status, 'deleted');
+        assert.strictEqual(untouched.status, 'unchanged');
+        assert.deepStrictEqual(next.selection, state.selection, 'selection should be left as-is, unlike deleteSelected');
+    });
+
+    it('does nothing when the control id is not found', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/hideControl', controlId: 'does.not.exist' });
+        assert.deepStrictEqual(next.model, state.model);
+    });
+});
+
+describe('ribbonState reducer: deleteControl', () => {
+    it('removes a control added this session entirely', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added' });
+        const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.new' });
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.ok(!controls.some(c => c.id === 'btn.new'));
+    });
+
+    it('does nothing to a built-in (unchanged) control -- can only be hidden, never truly deleted', () => {
+        const next = reducer(stateWithModel(baseModel()), { type: 'local/deleteControl', controlId: 'btn.no.command' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        assert.strictEqual(control.status, 'unchanged');
+    });
+
+    it('does nothing to a modified or deleted (hidden) built-in control either', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].status = 'deleted';
+        model.tabs[0].groups[0].controls[1].status = 'modified';
+        const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.no.command' });
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.strictEqual(controls.find(c => c.id === 'btn.no.command')!.status, 'deleted');
+        const next2 = reducer(stateWithModel(next.model!), { type: 'local/deleteControl', controlId: 'btn.with.command' });
+        assert.strictEqual(next2.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.with.command')!.status, 'modified');
+    });
+
+    it('does nothing when the control id is not found', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/deleteControl', controlId: 'does.not.exist' });
+        assert.deepStrictEqual(next.model, state.model);
+    });
+});
