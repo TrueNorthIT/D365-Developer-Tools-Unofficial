@@ -7,10 +7,10 @@ import { request } from './rpc';
 // aggressively — same pattern as src/webview/queries.ts's useIcon().
 
 /** A ribbon control's icon reference (Image16by16/Image32by32/ModernImage), resolved to a data: URI, or null if unresolvable. */
-export function useRibbonIcon(ref: string | undefined) {
+export function useRibbonIcon(ref: string | undefined, isModern = false) {
   return useQuery({
-    queryKey: ['ribbonIcon', ref],
-    queryFn: () => request('getIcon', { ref: ref as string }),
+    queryKey: ['ribbonIcon', ref, isModern],
+    queryFn: () => request('getIcon', { ref: ref as string, isModern }),
     enabled: !!ref,
     staleTime: Infinity,
   });

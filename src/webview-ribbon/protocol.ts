@@ -85,8 +85,10 @@ export type OutboundMessage =
 // ── RPC: request/response over the same transport (icon fetching) ───────────
 // Mirrors src/webview/protocol.ts's RpcRequestMap shape — see src/webview/rpc.ts for the transport.
 export interface RpcRequestMap {
-  /** Resolves a ribbon control's image16/image32 reference to a data: URI, or null if unresolvable. */
-  getIcon: { params: { ref: string }; result: string | null };
+  /** Resolves a ribbon control's image16/image32/modernImage reference to a data: URI, or null if
+   *  unresolvable. `isModern` additionally tries matching `ref` against Dataverse's built-in Fluent
+   *  icon set when the web resource lookup finds nothing -- see fluentIcon.ts. */
+  getIcon: { params: { ref: string; isModern?: boolean }; result: string | null };
   /** Web resource names matching `query` (contains, case-insensitive per Dataverse's OData contains()), capped at 25, for the icon/library fields' search-as-you-type. */
   searchWebResources: { params: { query: string }; result: string[] };
 }

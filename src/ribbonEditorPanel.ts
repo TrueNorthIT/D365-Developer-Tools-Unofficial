@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { DataverseClient, RibbonLocationFilter } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
 import { buildRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
+import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
 import type { RibbonModel } from './ribbon/ribbonModel';
 import { log, logError } from './logger';
 
@@ -128,7 +129,7 @@ export class RibbonEditorPanel {
     private resolveRequest(op: string, params: Record<string, unknown>): Promise<unknown> {
         switch (op) {
             case 'getIcon':
-                return this.getIconContent(params.ref as string);
+                return this.getIconContent(params.ref as string, !!params.isModern);
             case 'searchWebResources':
                 return this.client.searchWebResources(params.query as string);
             default:
@@ -136,9 +137,10 @@ export class RibbonEditorPanel {
         }
     }
 
-    private async getIconContent(ref: string): Promise<string | null> {
+    private async getIconContent(ref: string, isModern: boolean): Promise<string | null> {
         if (!ref) { return null; }
-        if (this._iconCache.has(ref)) { return this._iconCache.get(ref) ?? null; }
+        const cacheKey = isModern ? `modern:${ref}` : ref;
+        if (this._iconCache.has(cacheKey)) { return this._iconCache.get(cacheKey) ?? null; }
 
         let content: string | undefined;
         try {
@@ -146,7 +148,15 @@ export class RibbonEditorPanel {
         } catch {
             content = undefined; // fall through and cache null
         }
-        this._iconCache.set(ref, content ?? null);
+
+        // A bare ModernImage name (not an explicit $webresource:/system-path reference) that the web
+        // resource lookup above didn't resolve is most likely one of Dataverse's built-in Fluent icon
+        // names -- see fluentIcon.ts.
+        if (!content && isModern && !ref.startsWith('$webresource:') && !ref.startsWith('/')) {
+            content = resolveFluentIconDataUri(ref);
+        }
+
+        this._iconCache.set(cacheKey, content ?? null);
         return content ?? null;
     }
 
