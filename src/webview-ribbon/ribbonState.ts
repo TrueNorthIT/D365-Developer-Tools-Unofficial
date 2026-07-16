@@ -80,7 +80,6 @@ export type LocalAction =
   | { type: 'local/removeRuleFromCommand'; commandId: string; ruleType: 'enable' | 'display'; ruleId: string }
   | { type: 'local/deleteSelected' }
   | { type: 'local/reorderControl'; groupId: string; controlId: string; beforeControlId: string | null }
-  | { type: 'local/hideControl'; controlId: string }
   | { type: 'local/deleteControl'; controlId: string };
 
 export type Action = InboundMessage | LocalAction;
@@ -244,12 +243,8 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
             deleteSelection(model, sel);
             return { ...state, model, selection: null };
         }
-        case 'local/hideControl': {
-            hideControl(model, action.controlId);
-            break;
-        }
         case 'local/deleteControl': {
-            deleteControl(model, action.controlId);
+            deleteOrHideControl(model, action.controlId);
             break;
         }
         default:
@@ -271,32 +266,39 @@ function deleteSelection(model: RibbonModel, sel: NonNullable<Selection>): void 
         if (found.group.status === 'added') { found.tab.groups = found.tab.groups.filter(g => g.id !== sel.id); }
         else { found.group.status = found.group.status === 'deleted' ? 'unchanged' : 'deleted'; }
     } else if (sel.kind === 'control') {
-        // The toolbar's single "Delete / Restore" button acts on whatever's selected without
-        // distinguishing why -- unlike the button tile's right-click menu (hideControl/deleteControl
-        // below), which offers them as two separate, individually-disabled actions since only one is
-        // ever actually valid for a given control (see those functions' own comments).
-        const control = findControl(model, sel.id);
-        if (!control) { return; }
-        if (control.status === 'added') { deleteControl(model, sel.id); }
-        else { hideControl(model, sel.id); }
+        deleteOrHideControl(model, sel.id);
     }
 }
 
+// A control's only ever valid removal action depends entirely on whether it was added this session:
+// one added this session has no real server-side element yet, so it's just removed from the tree
+// (deleteControl); anything else -- base ribbon or a prior customization, indistinguishable at this
+// point (see mergeRibbonDiffXml in ribbonXmlBuilder.ts) -- can only be marked 'deleted' here and
+// resolved at publish time, which turns out to be a true removal when it *was* a customization, or a
+// HideCustomAction otherwise (hideControl). Exposed as one action (not two) so neither the toolbar's
+// "Delete / Restore" button nor the per-control context menu's single "Delete"/"Restore" item ever
+// needs to know or guess which case applies -- it's always the right one.
+function deleteOrHideControl(model: RibbonModel, controlId: string): void {
+    const control = findControl(model, controlId);
+    if (!control) { return; }
+    if (control.status === 'added') { deleteControl(model, controlId); }
+    else { hideControl(model, controlId); }
+}
+
 // Toggles a built-in/existing control's visibility (unchanged <-> deleted, i.e. hidden via a
-// HideCustomAction on export -- see buildRibbonDiffXml) -- a no-op for a control added this
-// session, since there's no real server-side element yet to hide; the only valid action there is
-// deleteControl below.
+// HideCustomAction on export -- see buildRibbonDiffXml) -- only called for a control that isn't
+// 'added' this session (see deleteOrHideControl above).
 function hideControl(model: RibbonModel, controlId: string): void {
     const control = findControl(model, controlId);
-    if (!control || control.status === 'added') { return; }
+    if (!control) { return; }
     control.status = control.status === 'deleted' ? 'unchanged' : 'deleted';
 }
 
-// Removes a control added this session entirely -- a no-op for a pre-existing/built-in control,
-// which can only ever be hidden (see hideControl above), never truly deleted.
+// Removes a control added this session entirely -- only called for a control that IS 'added' this
+// session (see deleteOrHideControl above).
 function deleteControl(model: RibbonModel, controlId: string): void {
     const control = findControl(model, controlId);
-    if (!control || control.status !== 'added') { return; }
+    if (!control) { return; }
     const parentArray = findControlParentArray(model, controlId);
     if (parentArray) { removeFromArray(parentArray, controlId); }
 }

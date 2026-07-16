@@ -64,7 +64,6 @@ export function App() {
           selection={state.selection}
           onSelect={selection => dispatch({ type: 'local/select', selection })}
           onReorderControl={(groupId, controlId, beforeControlId) => dispatch({ type: 'local/reorderControl', groupId, controlId, beforeControlId })}
-          onHideControl={controlId => dispatch({ type: 'local/hideControl', controlId })}
           onDeleteControl={controlId => dispatch({ type: 'local/deleteControl', controlId })}
         />
         <NodeEditor model={model} selection={state.selection} dispatch={dispatch} />

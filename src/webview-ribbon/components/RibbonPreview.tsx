@@ -11,14 +11,13 @@ interface Props {
   selection: Selection;
   onSelect: (selection: Selection) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
-  onHideControl: (controlId: string) => void;
   onDeleteControl: (controlId: string) => void;
 }
 
 // Renders the ribbon roughly as it appears in Dynamics itself: a tab strip, then the active tab's
 // groups as bordered boxes containing icon+label button tiles — replacing the earlier plain text
 // tree, which was unusable once real data showed up (hundreds of buttons/commands/rules at once).
-export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onHideControl, onDeleteControl }: Props) {
+export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onDeleteControl }: Props) {
   const [ctxMenu, setCtxMenu] = useState<{ control: RibbonControl; x: number; y: number } | null>(null);
   const visibleTabs = model.tabs.filter(t => t.status !== 'deleted' && (location === 'All' || locationOf(t.id) === location));
   const activeTab = visibleTabs.find(t => t.id === activeTabId) ?? visibleTabs[0];
@@ -69,7 +68,6 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
           x={ctxMenu.x}
           y={ctxMenu.y}
           onClose={() => setCtxMenu(null)}
-          onHide={onHideControl}
           onDelete={onDeleteControl}
         />
       )}
@@ -313,23 +311,22 @@ function statusSuffix(status: RibbonNodeStatus): string {
 }
 
 // Right-click menu for a single button tile, acting on whichever control was right-clicked rather
-// than requiring it to already be selected. Follows the same dismiss-on-outside-click/scroll/Escape
-// pattern as the entity explorer's ContextMenu (src/webview/components/ContextMenu.tsx) -- kept
-// local to this file rather than shared since the two menus have no target/action shape in common
-// beyond that dismissal behavior.
+// than requiring it to already be selected.
 //
-// Hide and Delete are two separate, individually-disabled actions rather than one combined toggle
-// (unlike the toolbar's generic "Delete / Restore" button) because only one is ever actually valid
-// for a given control: Dataverse can't truly delete a built-in ribbon button, only hide it (a
-// HideCustomAction on export), so Delete is disabled for anything except a control added this
-// session; conversely "hiding" a not-yet-published addition has no real server-side element to hide,
-// so Hide is disabled for those. See hideControl/deleteControl in ribbonState.ts.
-function ButtonContextMenu({ control, x, y, onClose, onHide, onDelete }: {
+// A single Delete/Restore action, same as the toolbar's generic "Delete / Restore" button -- what it
+// actually does under the hood (remove outright vs. mark hidden) depends on the control, but that's
+// resolved by deleteOrHideControl in ribbonState.ts, not something the menu needs to expose or gate
+// on. This used to be two separately-disabled Hide/Delete buttons -- reflecting the model's internal
+// mechanics (Dataverse can't truly delete a built-in button, only hide it) rather than what the user
+// is actually trying to do, which is just "get rid of this button" either way. Whether that ends up
+// as a real removal (see mergeRibbonDiffXml's removedCustomActionIds) or a HideCustomAction is only
+// knowable once the entity's real existing diff is fetched at publish time -- not something this
+// editor can predict from the loaded model, so it's no longer something the button-click UI guesses at.
+function ButtonContextMenu({ control, x, y, onClose, onDelete }: {
   control: RibbonControl;
   x: number;
   y: number;
   onClose: () => void;
-  onHide: (controlId: string) => void;
   onDelete: (controlId: string) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -362,24 +359,13 @@ function ButtonContextMenu({ control, x, y, onClose, onHide, onDelete }: {
     };
   }, [onClose]);
 
-  const isAdded = control.status === 'added';
   return (
     <div className="ribbon-ctx-menu" ref={menuRef} style={{ left: pos.x, top: pos.y }}>
       <button
         type="button"
-        disabled={isAdded}
-        title={isAdded ? 'Not yet published -- nothing to hide' : undefined}
-        onClick={() => { onClose(); onHide(control.id); }}
-      >
-        {control.status === 'deleted' ? 'Restore' : 'Hide'}
-      </button>
-      <button
-        type="button"
-        disabled={!isAdded}
-        title={!isAdded ? "Built-in buttons can't be deleted, only hidden" : undefined}
         onClick={() => { onClose(); onDelete(control.id); }}
       >
-        Delete
+        {control.status === 'deleted' ? 'Restore' : 'Delete'}
       </button>
     </div>
   );
