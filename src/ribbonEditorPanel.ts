@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import type { DataverseClient, Publisher, RibbonLocationFilter, RibbonMetadataGenerationStatus } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
-import { buildRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffXml, mergeRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
 import { buildRibbonSolutionZip, hasRibbonChanges } from './ribbon/solutionPackage';
 import type { RibbonModel } from './ribbon/ribbonModel';
@@ -260,7 +260,27 @@ export class RibbonEditorPanel {
         progress.report({ message: 'Reading entity metadata…' });
         const entityMetadata = await this.client.getEntityRibbonMetadata(this.entityLogicalName);
 
-        const ribbonDiffXml = buildRibbonDiffXml(model);
+        progress.report({ message: 'Reading existing ribbon customization…' });
+        let existingRibbonDiffXml: string | undefined;
+        try {
+            existingRibbonDiffXml = await this.client.getEntityCurrentRibbonDiffXml(
+                this.entityLogicalName, entityMetadata.metadataId, publisher.publisherId,
+            );
+        } catch (err) {
+            logError(`ribbon editor ('${this.entityLogicalName}') getEntityCurrentRibbonDiffXml`, err);
+            const proceed = await vscode.window.showWarningMessage(
+                `D365: Could not read the existing ribbon customizations for '${entityLabel}' (${errMsg(err)}). Publishing anyway ` +
+                `would replace ALL of its existing ribbon customizations with only this session's changes, discarding ` +
+                `anything else customized previously (by this tool, Ribbon Workbench, or by hand). Continue anyway?`,
+                { modal: true },
+                'Publish Anyway',
+            );
+            if (proceed !== 'Publish Anyway') { return; }
+        }
+
+        // Merges this session's edits into the entity's actual existing diff rather than rebuilding
+        // one purely from this model -- see mergeRibbonDiffXml's own doc comment for why that matters.
+        const ribbonDiffXml = mergeRibbonDiffXml(existingRibbonDiffXml ?? '', model);
         const solutionUniqueName = `d365vscodetools_ribbon_${Date.now()}`;
         const zip = buildRibbonSolutionZip({
             entityLogicalName: this.entityLogicalName,

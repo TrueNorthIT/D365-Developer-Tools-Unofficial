@@ -18,9 +18,28 @@ import type { RibbonCommandDefinition, RibbonControl, RibbonGroup, RibbonModel, 
 // on it staying that way.
 const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: true, suppressEmptyNode: true, suppressBooleanAttributes: false });
 
-export function buildRibbonDiffXml(model: RibbonModel): string {
+export interface RibbonDiffFragments {
+    customActions: string[];
+    hideCustomActions: string[];
+    commandDefinitions: string[];
+    enableRules: string[];
+    displayRules: string[];
+    /** Ids of CustomActions (`{node.id}.Custom`) that should be dropped from an existing diff outright
+     *  when merging, rather than left behind as inert dead weight -- one per tab/group/control marked
+     *  'deleted' this session. A HideCustomAction is still emitted for the same node regardless (see
+     *  the main loop below), since a 'deleted' node might be genuine base ribbon with no CustomAction
+     *  to remove in the first place -- this list only matters when one actually exists. See
+     *  mergeRibbonDiffXml. */
+    removedCustomActionIds: string[];
+}
+
+// Walks the model's tracked edits (added/modified/deleted) into the individual XML fragments a
+// RibbonDiffXml is built from -- split out from buildRibbonDiffXml so mergeRibbonDiffXml below can
+// splice these into an entity's actual existing diff instead of a bare skeleton.
+export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragments {
     const customActions: string[] = [];
     const hideCustomActions: string[] = [];
+    const removedCustomActionIds: string[] = [];
     let sequence = 100;
 
     for (const tab of model.tabs) {
@@ -35,6 +54,7 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
         }
         if (tab.status === 'deleted') {
             hideCustomActions.push(hideCustomAction(tab.id, 'Mscrm.Tabs._children'));
+            removedCustomActionIds.push(`${tab.id}.Custom`);
             continue;
         }
 
@@ -51,6 +71,7 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
             }
             if (group.status === 'deleted') {
                 hideCustomActions.push(hideCustomAction(group.id, groupsLocation));
+                removedCustomActionIds.push(`${group.id}.Custom`);
                 continue;
             }
 
@@ -65,6 +86,7 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
                     customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq)));
                 } else if (control.status === 'deleted') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
+                    removedCustomActionIds.push(`${control.id}.Custom`);
                 }
             }
         }
@@ -76,6 +98,25 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
     const enableRules = model.enableRules.filter(r => r.status === 'added' || r.status === 'modified').map(r => r.xml.trim());
     const displayRules = model.displayRules.filter(r => r.status === 'added' || r.status === 'modified').map(r => r.xml.trim());
 
+    return { customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, removedCustomActionIds };
+}
+
+// Builds a standalone RibbonDiffXml containing only this session's tracked edits -- used by the
+// "Export RibbonDiffXml" button, where showing just the delta is the point (human review of what
+// changed). NOT used for publishToDynamics -- see mergeRibbonDiffXml below for why a full solution
+// publish needs the entity's actual existing diff folded in instead of just this.
+export function buildRibbonDiffXml(model: RibbonModel): string {
+    const f = buildRibbonDiffFragments(model);
+    return assembleRibbonDiffXml(f.customActions, f.hideCustomActions, f.commandDefinitions, f.enableRules, f.displayRules);
+}
+
+function assembleRibbonDiffXml(
+    customActions: string[],
+    hideCustomActions: string[],
+    commandDefinitions: string[],
+    enableRules: string[],
+    displayRules: string[],
+): string {
     return [
         '<RibbonDiffXml>',
         '  <CustomActions>',
@@ -99,6 +140,100 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
         '  </HideCustomActions>',
         '</RibbonDiffXml>',
     ].join('\n');
+}
+
+// Merges this session's edits into the entity's ACTUAL existing RibbonDiffXml (fetched separately --
+// see dataverseClient.ts's getEntityCurrentRibbonDiffXml) instead of rebuilding a diff purely from
+// this model's tracked statuses. Every node this editor loads starts life as 'unchanged' with no way
+// to tell "an existing customization" apart from "Microsoft's base ribbon" (both come back merged
+// together from RetrieveEntityRibbon) -- and ImportSolution's RibbonDiffXml REPLACES an entity's
+// entire unmanaged ribbon diff wholesale, confirmed against a live environment. Publishing only this
+// session's delta therefore silently dropped every customization -- this tool's own or anyone else's
+// (Ribbon Workbench, hand-edited) -- that wasn't touched in the current session. Fetching the raw
+// existing diff and merging fragment-by-Id -- keeping everything untouched byte-for-byte, only
+// replacing/adding what this session's edits produce -- fixes that without this editor ever needing
+// to know which merged-ribbon nodes were customizations to begin with.
+export function mergeRibbonDiffXml(existingRibbonDiffXml: string, model: RibbonModel): string {
+    const f = buildRibbonDiffFragments(model);
+
+    // Deleted nodes get their own CustomAction (if one exists) stripped outright, on top of the
+    // ordinary Id-collision exclusion below -- see removedCustomActionIds' own doc comment.
+    const customActions = mergeSection(existingRibbonDiffXml, 'CustomActions', f.customActions, new Set(f.removedCustomActionIds));
+    const hideCustomActions = mergeSection(existingRibbonDiffXml, 'HideCustomActions', f.hideCustomActions);
+    const commandDefinitions = mergeSection(existingRibbonDiffXml, 'CommandDefinitions', f.commandDefinitions);
+
+    const ruleDefinitions = extractElementInner(existingRibbonDiffXml, 'RuleDefinitions') ?? '';
+    const enableRules = mergeSection(ruleDefinitions, 'EnableRules', f.enableRules);
+    const displayRules = mergeSection(ruleDefinitions, 'DisplayRules', f.displayRules);
+
+    return assembleRibbonDiffXml(customActions, hideCustomActions, commandDefinitions, enableRules, displayRules);
+}
+
+// Keeps every existing top-level fragment in `sectionTag` whose Id doesn't collide with one of
+// `newFragments`, and isn't in `extraExcludeIds`, verbatim byte-for-byte from the source diff, then
+// appends the new ones -- so an edit to a previously-customized node replaces its old fragment
+// instead of duplicating it (which would otherwise leave two same-Id CustomActions for the same
+// node), a delete removes it outright (extraExcludeIds), and anything untouched this session passes
+// through unchanged.
+function mergeSection(containerXml: string, sectionTag: string, newFragments: string[], extraExcludeIds?: Set<string>): string[] {
+    const existingInner = extractElementInner(containerXml, sectionTag) ?? '';
+    const newIds = new Set(newFragments.map(extractId).filter((id): id is string => !!id));
+    const kept = splitTopLevelElements(existingInner)
+        .filter(f => !f.id || (!newIds.has(f.id) && !extraExcludeIds?.has(f.id)))
+        .map(f => f.xml);
+    return [...kept, ...newFragments];
+}
+
+// Returns the inner text of the first `<tag>...</tag>` (or '' for a self-closing `<tag />`) found
+// anywhere in `xml`, or undefined if `tag` doesn't appear at all. Unanchored on purpose -- callers
+// only ever look for RibbonDiffXml's small set of fixed, non-repeating top-level section names.
+function extractElementInner(xml: string, tag: string): string | undefined {
+    const openMatch = new RegExp(`<${tag}(?:\\s[^>]*)?/>|<${tag}(?:\\s[^>]*)?>`).exec(xml);
+    if (!openMatch) { return undefined; }
+    if (openMatch[0].endsWith('/>')) { return ''; }
+    const closeTag = `</${tag}>`;
+    const closeIdx = xml.indexOf(closeTag, openMatch.index + openMatch[0].length);
+    if (closeIdx === -1) { return undefined; }
+    return xml.slice(openMatch.index + openMatch[0].length, closeIdx);
+}
+
+function extractId(xmlFragment: string): string | undefined {
+    return /\bId\s*=\s*"([^"]*)"/.exec(xmlFragment)?.[1];
+}
+
+// Splits a section's inner XML into its immediate child elements (each one possibly containing its
+// own deeply-nested markup, e.g. a CustomAction's CommandUIDefinition/Button/etc.), pairing each with
+// its own Id attribute -- generic depth tracking over every tag encountered, not just same-name
+// pairs, since children nest tags of many different names.
+const TAG_TOKEN_RE = /<([a-zA-Z_][\w.-]*)((?:\s+[^<>]*?)?)(\/?)>|<\/([a-zA-Z_][\w.-]*)\s*>/g;
+
+function splitTopLevelElements(innerXml: string): Array<{ id: string | undefined; xml: string }> {
+    const results: Array<{ id: string | undefined; xml: string }> = [];
+    let depth = 0;
+    let start = -1;
+    let currentId: string | undefined;
+    TAG_TOKEN_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = TAG_TOKEN_RE.exec(innerXml))) {
+        const isClosing = m[4] !== undefined;
+        const isSelfClosing = m[3] === '/';
+
+        if (depth === 0 && !isClosing) {
+            start = m.index;
+            currentId = extractId(m[0]);
+        }
+        if (!isClosing && !isSelfClosing) {
+            depth++;
+        } else if (isClosing) {
+            depth--;
+        }
+
+        if (depth === 0 && start >= 0) {
+            results.push({ id: currentId, xml: innerXml.slice(start, m.index + m[0].length).trim() });
+            start = -1;
+        }
+    }
+    return results;
 }
 
 // ── Node serialization (RibbonModel -> XML fragment) ─────────────────────────

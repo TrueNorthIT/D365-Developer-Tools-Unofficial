@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { buildRibbonDiffXml } from '../../src/ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffXml, mergeRibbonDiffXml } from '../../src/ribbon/ribbonXmlBuilder';
 import type { RibbonModel } from '../../src/ribbon/ribbonModel';
 
 function baseModel(): RibbonModel {
@@ -152,5 +152,105 @@ describe('buildRibbonDiffXml', () => {
         assert.match(xml, /<CustomActions>[\s\S]*<\/CustomActions>/);
         assert.match(xml, /<CommandDefinitions>[\s\S]*<\/CommandDefinitions>/);
         assert.match(xml, /<HideCustomActions>[\s\S]*<\/HideCustomActions>/);
+    });
+});
+
+describe('mergeRibbonDiffXml', () => {
+    const existingDiff = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="prior_button.Custom" Location="grp.other.Controls._children" Sequence="50">
+      <CommandUIDefinition>
+        <Button Id="prior_button" LabelText="Prior" Sequence="50" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+    <CustomAction Id="existing_button.Custom" Location="grp.currency.Controls._children" Sequence="60">
+      <CommandUIDefinition>
+        <Button Id="existing_button" LabelText="Old Label" Sequence="60" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+    <CustomAction Id="removed_button.Custom" Location="grp.currency.Controls._children" Sequence="70">
+      <CommandUIDefinition>
+        <Button Id="removed_button" LabelText="Gone" Sequence="70" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+  <Templates />
+  <CommandDefinitions>
+    <CommandDefinition Id="cmd.prior">
+      <EnableRules />
+      <DisplayRules />
+    </CommandDefinition>
+  </CommandDefinitions>
+  <RuleDefinitions>
+    <TabDisplayRules />
+    <DisplayRules>
+      <DisplayRule Id="rule.priorDisplay">
+        <CustomRule Library="$webresource:old.js" FunctionName="oldFn" />
+      </DisplayRule>
+    </DisplayRules>
+    <EnableRules>
+      <EnableRule Id="rule.priorEnable">
+        <CrmClientTypeRule Type="Web" />
+      </EnableRule>
+    </EnableRules>
+  </RuleDefinitions>
+  <HideCustomActions>
+    <HideCustomAction Id="already_hidden.Hide" Location="grp.currency.Controls._children" CommandUIElementId="already_hidden" />
+  </HideCustomActions>
+</RibbonDiffXml>`;
+
+    it('is equivalent to buildRibbonDiffXml when there is no existing diff to merge into', () => {
+        const model = baseModel();
+        assert.strictEqual(mergeRibbonDiffXml('', model), buildRibbonDiffXml(model));
+    });
+
+    it('preserves an existing customization this session never touched', () => {
+        const xml = mergeRibbonDiffXml(existingDiff, baseModel());
+        assert.match(xml, /<CustomAction Id="prior_button\.Custom"[\s\S]*?LabelText="Prior"[\s\S]*?<\/CustomAction>/);
+        assert.match(xml, /<CommandDefinition Id="cmd\.prior">/);
+        assert.match(xml, /<DisplayRule Id="rule\.priorDisplay">/);
+        assert.match(xml, /<EnableRule Id="rule\.priorEnable">/);
+        assert.match(xml, /<HideCustomAction Id="already_hidden\.Hide"/);
+    });
+
+    it('replaces an existing CustomAction sharing an Id with this session\'s edit, instead of duplicating it', () => {
+        const xml = mergeRibbonDiffXml(existingDiff, baseModel());
+        const matches = xml.match(/Id="existing_button\.Custom"/g);
+        assert.strictEqual(matches?.length, 1, 'the old and new existing_button.Custom fragments must not both appear');
+        assert.doesNotMatch(xml, /Old Label/);
+        assert.match(xml, /LabelText="Edited Label"/);
+    });
+
+    it('still emits this session\'s new fragments (added tab/control) alongside preserved ones', () => {
+        const xml = mergeRibbonDiffXml(existingDiff, baseModel());
+        assert.match(xml, /<CustomAction Id="added_button\.Custom"/);
+        assert.match(xml, /<CustomAction Id="new_tab\.Custom"/);
+        assert.match(xml, /<CommandDefinition Id="cmd\.added">/);
+    });
+
+    it('does not carry through an existing fragment with no Id attribute at all as a duplicate-safety edge case', () => {
+        // A HideCustomAction with the same target Id as this session's own delete should not duplicate.
+        const model = baseModel();
+        const xml = mergeRibbonDiffXml(existingDiff, model);
+        const hideMatches = xml.match(/Id="removed_button\.Hide"/g);
+        assert.strictEqual(hideMatches?.length, 1);
+    });
+
+    it('removes a previously-customized control\'s own CustomAction outright when deleted this session, not just a Hide alongside it', () => {
+        // existingDiff's removed_button.Custom represents a prior customization; baseModel marks
+        // removed_button 'deleted' this session -- it should be truly gone, not left as dead weight.
+        const xml = mergeRibbonDiffXml(existingDiff, baseModel());
+        assert.doesNotMatch(xml, /Id="removed_button\.Custom"/);
+        assert.match(xml, /<HideCustomAction Id="removed_button\.Hide"/);
+    });
+
+    it('still just Hides a deleted control with no prior CustomAction to remove (e.g. genuine base ribbon), without erroring', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'base_button', label: 'Base', toolTipTitle: '', toolTipDescription: '', status: 'deleted' },
+        );
+        const xml = mergeRibbonDiffXml(existingDiff, model);
+        assert.match(xml, /<HideCustomAction Id="base_button\.Hide"/);
+        assert.doesNotMatch(xml, /Id="base_button\.Custom"/);
     });
 });

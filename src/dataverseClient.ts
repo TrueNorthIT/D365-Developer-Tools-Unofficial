@@ -2,6 +2,8 @@ import { XMLParser } from 'fast-xml-parser';
 import type { ConnectionManager } from './connectionManager';
 import { log } from './logger';
 import { decompressRibbonPayload } from './ribbon/decompressRibbon';
+import { readZipEntry } from './ribbon/zip';
+import { extractRibbonDiffXmlFromCustomizations } from './ribbon/solutionPackage';
 
 // ── Dataverse OData response shapes ────────────────────────────────────────
 
@@ -26,6 +28,7 @@ interface EntityDefinitionResponse {
 }
 
 interface EntityRibbonMetadataResponse {
+    MetadataId: string;
     SchemaName: string;
     DisplayName: DataverseLabel;
     DisplayCollectionName: DataverseLabel;
@@ -108,6 +111,9 @@ export interface EntityDefinition {
 // ribbon-only solution import apparently needs (see solutionPackage.ts). Fetched live and used
 // verbatim, never guessed, precisely because this is metadata that could matter if it were wrong.
 export interface EntityRibbonMetadata {
+    /** The entity's MetadataId -- used as the ComponentId when adding it to a solution (e.g. for
+     *  getEntityCurrentRibbonDiffXml's export round-trip), distinct from any data record id. */
+    metadataId: string;
     schemaName: string;
     displayName: string;
     displayCollectionName: string;
@@ -195,13 +201,14 @@ export class DataverseClient {
     async getEntityRibbonMetadata(entityLogicalName: string): Promise<EntityRibbonMetadata> {
         const url = this.apiUrl(
             `EntityDefinitions(LogicalName='${entityLogicalName}')`,
-            '$select=SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion',
+            '$select=MetadataId,SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion',
         );
 
         const data = await this.request<EntityRibbonMetadataResponse>(url);
         if (!data) { throw new Error(`No metadata returned for entity '${entityLogicalName}'.`); }
 
         return {
+            metadataId: data.MetadataId,
             schemaName: data.SchemaName,
             displayName: extractLabel(data.DisplayName) || data.SchemaName,
             displayCollectionName: extractLabel(data.DisplayCollectionName) || data.SchemaName,
@@ -445,15 +452,18 @@ export class DataverseClient {
         await this.request(url, { method: 'POST', body: { ParameterXml: parameterXml } });
     }
 
-    async addSolutionComponent(componentId: string, solutionUniqueName: string): Promise<void> {
+    async addSolutionComponent(componentId: string, solutionUniqueName: string, componentType = 61 /* Web Resource */): Promise<void> {
         const url = this.apiUrl('AddSolutionComponent');
         await this.request(url, {
             method: 'POST',
             body: {
                 ComponentId: componentId,
-                ComponentType: 61, // Web Resource
+                ComponentType: componentType,
                 SolutionUniqueName: solutionUniqueName,
                 AddRequiredComponents: false,
+                // Entity (1) needs its subcomponents included, or its Ribbon Customization -- what
+                // getEntityCurrentRibbonDiffXml actually wants out of the export below -- is left out.
+                DoNotIncludeSubcomponents: false,
             },
         });
     }
@@ -527,6 +537,71 @@ export class DataverseClient {
     async deleteSolution(solutionId: string): Promise<void> {
         const url = this.apiUrl(`solutions(${solutionId})`);
         await this.request(url, { method: 'DELETE' });
+    }
+
+    async createSolution(publisherId: string, uniqueName: string, friendlyName: string): Promise<string> {
+        const url = this.apiUrl('solutions');
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { ...this.headers(await this.connectionManager.getAccessToken()), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                uniquename: uniqueName,
+                friendlyname: friendlyName,
+                version: '1.0.0.0',
+                'publisherid@odata.bind': `/publishers(${publisherId})`,
+            }),
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`Dataverse API error ${response.status}: ${body || response.statusText}`);
+        }
+
+        const entityId = response.headers.get('OData-EntityId');
+        const match = entityId?.match(/\(([0-9a-fA-F-]{36})\)/);
+        if (!match) { throw new Error('Solution created but its ID could not be determined.'); }
+        return match[1];
+    }
+
+    // Returns the raw bytes of an unmanaged export of the given solution (ExportSolutionFile is
+    // base64-encoded in the JSON response).
+    async exportSolution(uniqueName: string): Promise<Buffer> {
+        const url = this.apiUrl('ExportSolution');
+        const data = await this.request<{ ExportSolutionFile: string }>(url, {
+            method: 'POST',
+            body: { SolutionName: uniqueName, Managed: false },
+        });
+        if (!data?.ExportSolutionFile) { throw new Error(`ExportSolution returned no file for solution '${uniqueName}'.`); }
+        return Buffer.from(data.ExportSolutionFile, 'base64');
+    }
+
+    // Fetches the entity's ACTUAL current RibbonDiffXml -- not the merged/effective ribbon
+    // RetrieveEntityRibbon returns -- by round-tripping through a real solution export, the same way
+    // a developer manually preparing to hand-edit a ribbon would (see Microsoft's own "Export,
+    // prepare to edit, and import the ribbon" guidance). There's no direct Web API property for this;
+    // exporting is the only way to get it byte-for-byte as Dataverse actually has it stored. Used by
+    // publishToDynamics (ribbonEditorPanel.ts) via mergeRibbonDiffXml so a publish only replaces the
+    // fragments this session actually touched, instead of the entity's entire ribbon customization.
+    //
+    // The temporary solution this creates is deleted again before returning (best-effort) -- same
+    // "temporary" caveat as the publish-side temp solution: deleting it doesn't undo anything, it's
+    // just solution-list bookkeeping. Returns undefined if the entity has no existing customization
+    // (a brand-new entity, or one whose ribbon has never been touched).
+    async getEntityCurrentRibbonDiffXml(entityLogicalName: string, entityMetadataId: string, publisherId: string): Promise<string | undefined> {
+        const solutionUniqueName = `d365vscodetools_ribbonexport_${Date.now()}`;
+        const solutionId = await this.createSolution(publisherId, solutionUniqueName, `Ribbon export: ${entityLogicalName} (temporary)`);
+
+        try {
+            await this.addSolutionComponent(entityMetadataId, solutionUniqueName, 1 /* Entity */);
+            const zip = await this.exportSolution(solutionUniqueName);
+            const customizationsXmlBuffer = readZipEntry(zip, 'customizations.xml');
+            if (!customizationsXmlBuffer) { throw new Error("Exported solution zip has no 'customizations.xml' entry."); }
+
+            const customizationsXml = decodeXmlBuffer(customizationsXmlBuffer);
+            return extractRibbonDiffXmlFromCustomizations(customizationsXml);
+        } finally {
+            await this.deleteSolution(solutionId).catch(err => log(`getEntityCurrentRibbonDiffXml: could not delete temporary solution '${solutionUniqueName}': ${err}`));
+        }
     }
 
     // ── Ribbon metadata regeneration (regenerateRibbonMetadata — ribbonEditorPanel.ts) ──────

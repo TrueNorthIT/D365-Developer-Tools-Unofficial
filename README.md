@@ -168,9 +168,9 @@ Each entity/location combination opens in its own editor tab, since they're mate
 
 - Browse the effective ribbon (tabs → groups → buttons/split-buttons/flyouts) rendered to look like the real thing, icons included
 - Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules
-- Add new tabs, groups, and controls, or mark existing ones for deletion
+- Add new tabs, groups, and controls, or mark existing ones for deletion — a control that's a prior customization has its underlying `CustomAction` removed outright on publish, not just hidden
 - **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution
-- **Publish to Dynamics** — imports a small throwaway unmanaged solution carrying just your changes, publishes the entity, and removes the temporary solution. You'll be prompted to pick a publisher if more than one is available.
+- **Publish to Dynamics** — imports a small throwaway unmanaged solution carrying just your changes, publishes the entity, and removes the temporary solution. Merges into the entity's actual existing ribbon customization rather than replacing it, so anything you didn't touch (this tool's own earlier edits, Ribbon Workbench, hand edits) is preserved. You'll be prompted to pick a publisher if more than one is available.
 - **Regenerate Ribbon Metadata…** — triggers the same environment-wide operation as Command Checker's own button, and tracks its progress via Solution History
 
 ## Title Bar Actions

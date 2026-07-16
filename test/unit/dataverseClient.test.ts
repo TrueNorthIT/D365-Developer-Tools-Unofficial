@@ -3,6 +3,7 @@ import * as sinon from 'sinon';
 import * as zlib from 'zlib';
 import { DataverseClient } from '../../src/dataverseClient';
 import type { ConnectionManager } from '../../src/connectionManager';
+import { buildZip } from '../helpers/zip';
 
 const ENV_URL = 'https://contoso.crm.dynamics.com';
 const TOKEN = 'fake-token-123';
@@ -247,6 +248,7 @@ describe('DataverseClient', () => {
         it('requests the expected fields and maps labels/fallbacks', async () => {
             fetchStub.resolves(fakeResponse({
                 text: async () => JSON.stringify({
+                    MetadataId: 'entity-metadata-id',
                     SchemaName: 'tn_JCTesttable',
                     DisplayName: label('JC Test table'),
                     DisplayCollectionName: label('JC Test tables'),
@@ -263,9 +265,10 @@ describe('DataverseClient', () => {
             const [url] = fetchStub.firstCall.args;
             assert.strictEqual(
                 url,
-                `${ENV_URL}/api/data/v9.2/EntityDefinitions(LogicalName='tn_jctesttable')?$select=SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion`,
+                `${ENV_URL}/api/data/v9.2/EntityDefinitions(LogicalName='tn_jctesttable')?$select=MetadataId,SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion`,
             );
             assert.deepStrictEqual(result, {
+                metadataId: 'entity-metadata-id',
                 schemaName: 'tn_JCTesttable',
                 displayName: 'JC Test table',
                 displayCollectionName: 'JC Test tables',
@@ -629,7 +632,7 @@ describe('DataverseClient', () => {
     // ── addSolutionComponent ─────────────────────────────────────────────
 
     describe('addSolutionComponent', () => {
-        it('POSTs a body including ComponentType 61 and the other fixed fields', async () => {
+        it('defaults ComponentType to 61 (Web Resource) and includes the other fixed fields', async () => {
             fetchStub.resolves(fakeResponse({ text: async () => '' }));
             const client = new DataverseClient(fakeConnectionManager());
             await client.addSolutionComponent('comp-1', 'MySolution');
@@ -642,7 +645,18 @@ describe('DataverseClient', () => {
                 ComponentType: 61,
                 SolutionUniqueName: 'MySolution',
                 AddRequiredComponents: false,
+                DoNotIncludeSubcomponents: false,
             });
+        });
+
+        it('accepts an explicit ComponentType (e.g. 1 for Entity)', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.addSolutionComponent('entity-metadata-id', 'MySolution', 1);
+
+            const [, requestInit] = fetchStub.firstCall.args;
+            const body = JSON.parse(requestInit.body);
+            assert.strictEqual(body.ComponentType, 1);
         });
     });
 
@@ -776,6 +790,128 @@ describe('DataverseClient', () => {
             const [url, requestInit] = fetchStub.firstCall.args;
             assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/solutions(sol-1)`);
             assert.strictEqual(requestInit.method, 'DELETE');
+        });
+    });
+
+    // ── createSolution ────────────────────────────────────────────────────
+
+    describe('createSolution', () => {
+        it('POSTs the expected body and parses the created id from the OData-EntityId header', async () => {
+            const solutionId = '11111111-1111-1111-1111-111111111111';
+            fetchStub.resolves(fakeResponse({
+                headers: { 'OData-EntityId': `${ENV_URL}/api/data/v9.2/solutions(${solutionId})` },
+            }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.createSolution('pub-1', 'myuniquename', 'My Friendly Name');
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/solutions`);
+            assert.strictEqual(requestInit.method, 'POST');
+            assert.deepStrictEqual(JSON.parse(requestInit.body), {
+                uniquename: 'myuniquename',
+                friendlyname: 'My Friendly Name',
+                version: '1.0.0.0',
+                'publisherid@odata.bind': '/publishers(pub-1)',
+            });
+            assert.strictEqual(result, solutionId);
+        });
+
+        it('throws when the OData-EntityId header is missing', async () => {
+            fetchStub.resolves(fakeResponse());
+            const client = new DataverseClient(fakeConnectionManager());
+            await assert.rejects(() => client.createSolution('pub-1', 'x', 'y'));
+        });
+    });
+
+    // ── exportSolution ────────────────────────────────────────────────────
+
+    describe('exportSolution', () => {
+        it('POSTs SolutionName/Managed and decodes the base64 ExportSolutionFile', async () => {
+            const zip = buildZip([{ name: 'solution.xml', content: Buffer.from('<xml/>', 'utf8'), method: 0 }]);
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ ExportSolutionFile: zip.toString('base64') }) }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.exportSolution('myuniquename');
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/ExportSolution`);
+            assert.deepStrictEqual(JSON.parse(requestInit.body), { SolutionName: 'myuniquename', Managed: false });
+            assert.deepStrictEqual(result, zip);
+        });
+
+        it('throws when no ExportSolutionFile is returned', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({}) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await assert.rejects(() => client.exportSolution('myuniquename'));
+        });
+    });
+
+    // ── getEntityCurrentRibbonDiffXml ─────────────────────────────────────
+
+    describe('getEntityCurrentRibbonDiffXml', () => {
+        function customizationsZipBase64(entityXmlInner: string): string {
+            const customizationsXml = `<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml><Entities><Entity>${entityXmlInner}</Entity></Entities></ImportExportXml>`;
+            return buildZip([{ name: 'customizations.xml', content: Buffer.from(customizationsXml, 'utf8'), method: 0 }]).toString('base64');
+        }
+
+        it('creates a temp solution, adds the entity (type 1), exports, extracts RibbonDiffXml, then deletes the temp solution', async () => {
+            const solutionId = '22222222-2222-2222-2222-222222222222';
+            const exportBase64 = customizationsZipBase64(
+                '<Name>tn_jctesttable</Name><RibbonDiffXml><CustomActions><CustomAction Id="existing.Custom" Location="X" Sequence="1"><CommandUIDefinition><Button Id="existing" /></CommandUIDefinition></CustomAction></CustomActions></RibbonDiffXml>',
+            );
+
+            fetchStub.onCall(0).resolves(fakeResponse({ headers: { 'OData-EntityId': `${ENV_URL}/api/data/v9.2/solutions(${solutionId})` } })); // createSolution
+            fetchStub.onCall(1).resolves(fakeResponse({ text: async () => '' })); // addSolutionComponent
+            fetchStub.onCall(2).resolves(fakeResponse({ text: async () => JSON.stringify({ ExportSolutionFile: exportBase64 }) })); // exportSolution
+            fetchStub.onCall(3).resolves(fakeResponse({ text: async () => '' })); // deleteSolution
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityCurrentRibbonDiffXml('tn_jctesttable', 'entity-metadata-id', 'pub-1');
+
+            assert.ok(result?.includes('existing.Custom'), 'should return the RibbonDiffXml containing the existing customization');
+
+            // addSolutionComponent used Entity (1) with the given metadata id.
+            const addComponentBody = JSON.parse(fetchStub.getCall(1).args[1].body);
+            assert.strictEqual(addComponentBody.ComponentId, 'entity-metadata-id');
+            assert.strictEqual(addComponentBody.ComponentType, 1);
+
+            // The temporary solution was cleaned up.
+            const [deleteUrl, deleteInit] = fetchStub.getCall(3).args;
+            assert.strictEqual(deleteUrl, `${ENV_URL}/api/data/v9.2/solutions(${solutionId})`);
+            assert.strictEqual(deleteInit.method, 'DELETE');
+        });
+
+        it('returns undefined when the entity has no existing RibbonDiffXml', async () => {
+            const solutionId = '33333333-3333-3333-3333-333333333333';
+            const exportBase64 = customizationsZipBase64('<Name>tn_jctesttable</Name>');
+
+            fetchStub.onCall(0).resolves(fakeResponse({ headers: { 'OData-EntityId': `${ENV_URL}/api/data/v9.2/solutions(${solutionId})` } }));
+            fetchStub.onCall(1).resolves(fakeResponse({ text: async () => '' }));
+            fetchStub.onCall(2).resolves(fakeResponse({ text: async () => JSON.stringify({ ExportSolutionFile: exportBase64 }) }));
+            fetchStub.onCall(3).resolves(fakeResponse({ text: async () => '' }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityCurrentRibbonDiffXml('tn_jctesttable', 'entity-metadata-id', 'pub-1');
+
+            assert.strictEqual(result, undefined);
+        });
+
+        it('still deletes the temporary solution even when exportSolution fails', async () => {
+            const solutionId = '44444444-4444-4444-4444-444444444444';
+            fetchStub.onCall(0).resolves(fakeResponse({ headers: { 'OData-EntityId': `${ENV_URL}/api/data/v9.2/solutions(${solutionId})` } }));
+            fetchStub.onCall(1).resolves(fakeResponse({ text: async () => '' }));
+            fetchStub.onCall(2).resolves(fakeResponse({ ok: false, status: 500, text: async () => 'boom' }));
+            fetchStub.onCall(3).resolves(fakeResponse({ text: async () => '' }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            await assert.rejects(() => client.getEntityCurrentRibbonDiffXml('tn_jctesttable', 'entity-metadata-id', 'pub-1'));
+
+            assert.strictEqual(fetchStub.callCount, 4, 'deleteSolution should still be attempted after a failure');
+            const [deleteUrl, deleteInit] = fetchStub.getCall(3).args;
+            assert.strictEqual(deleteUrl, `${ENV_URL}/api/data/v9.2/solutions(${solutionId})`);
+            assert.strictEqual(deleteInit.method, 'DELETE');
         });
     });
 

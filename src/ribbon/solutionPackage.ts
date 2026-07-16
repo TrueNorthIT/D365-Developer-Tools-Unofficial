@@ -176,6 +176,25 @@ function buildEntityInfoXml(meta: EntityRibbonMetadata): string {
       </EntityInfo>`;
 }
 
+// The reverse of buildRibbonSolutionZip's customizations.xml above -- pulls an entity's actual
+// current <RibbonDiffXml> back out of a customizations.xml exported via ExportSolution (see
+// dataverseClient.ts's getEntityCurrentRibbonDiffXml). Returns undefined if the entity has no
+// existing ribbon customization at all (a brand-new entity, or one whose ribbon was never touched),
+// which callers treat as "start from an empty diff" -- see mergeRibbonDiffXml in ribbonXmlBuilder.ts.
+export function extractRibbonDiffXmlFromCustomizations(customizationsXml: string): string | undefined {
+    const selfClosing = /<RibbonDiffXml(?:\s[^>]*)?\/>/.exec(customizationsXml);
+    if (selfClosing) { return undefined; }
+
+    const openMatch = /<RibbonDiffXml(?:\s[^>]*)?>/.exec(customizationsXml);
+    if (!openMatch) { return undefined; }
+
+    const closeTag = '</RibbonDiffXml>';
+    const closeIdx = customizationsXml.indexOf(closeTag, openMatch.index + openMatch[0].length);
+    if (closeIdx === -1) { return undefined; }
+
+    return customizationsXml.slice(openMatch.index, closeIdx + closeTag.length);
+}
+
 /** Whether any node in the model has actually been touched -- used to short-circuit "Publish" with
  *  an info message instead of importing a solution that would apply an empty diff. */
 export function hasRibbonChanges(model: RibbonModel): boolean {

@@ -90,3 +90,78 @@ function crc32(buf: Buffer): number {
     }
     return (~crc) >>> 0;
 }
+
+// ── Reading (the counterpart to buildZip above) ──────────────────────────────
+// Just enough of the PKZIP format to find one named entry in an arbitrary zip and return its
+// decompressed bytes -- used to pull customizations.xml back out of ExportSolution's response
+// (dataverseClient.ts's getEntityCurrentRibbonDiffXml). See decompressRibbon.ts for a sibling
+// reader tailored to OPC ribbon payloads specifically; this one is generic by entry name.
+
+const EOCD_SIGNATURE = 0x06054b50;
+const CENTRAL_DIR_SIGNATURE = 0x02014b50;
+const LOCAL_HEADER_SIGNATURE = 0x04034b50;
+
+interface ZipEntry {
+    name: string;
+    compressionMethod: number;
+    compressedSize: number;
+    localHeaderOffset: number;
+}
+
+export function readZipEntry(buffer: Buffer, entryName: string): Buffer | undefined {
+    const eocdOffset = findEocd(buffer);
+    const entries = readCentralDirectory(buffer, eocdOffset);
+    const target = entries.find(e => e.name.replace(/^\/+/, '') === entryName);
+    return target ? extractEntry(buffer, target) : undefined;
+}
+
+function readCentralDirectory(buffer: Buffer, eocdOffset: number): ZipEntry[] {
+    const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+    let offset = buffer.readUInt32LE(eocdOffset + 16);
+    const entries: ZipEntry[] = [];
+
+    for (let i = 0; i < totalEntries; i++) {
+        if (buffer.readUInt32LE(offset) !== CENTRAL_DIR_SIGNATURE) {
+            throw new Error(`Zip central directory entry #${i} is malformed.`);
+        }
+
+        const compressionMethod = buffer.readUInt16LE(offset + 10);
+        const compressedSize = buffer.readUInt32LE(offset + 20);
+        const nameLength = buffer.readUInt16LE(offset + 28);
+        const extraLength = buffer.readUInt16LE(offset + 30);
+        const commentLength = buffer.readUInt16LE(offset + 32);
+        const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+        const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
+
+        entries.push({ name, compressionMethod, compressedSize, localHeaderOffset });
+        offset += 46 + nameLength + extraLength + commentLength;
+    }
+
+    return entries;
+}
+
+function extractEntry(buffer: Buffer, entry: ZipEntry): Buffer {
+    if (buffer.readUInt32LE(entry.localHeaderOffset) !== LOCAL_HEADER_SIGNATURE) {
+        throw new Error(`Zip local file header for '${entry.name}' is malformed.`);
+    }
+
+    const localNameLength = buffer.readUInt16LE(entry.localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(entry.localHeaderOffset + 28);
+    const dataStart = entry.localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataStart, dataStart + entry.compressedSize);
+
+    if (entry.compressionMethod === 0) { return Buffer.from(compressed); }
+    if (entry.compressionMethod === 8) { return zlib.inflateRawSync(compressed); }
+    throw new Error(`Unsupported ZIP compression method (${entry.compressionMethod}) for '${entry.name}'.`);
+}
+
+function findEocd(buffer: Buffer): number {
+    // The EOCD record is 22 bytes plus an optional comment (up to 65535 bytes) after it, so it
+    // isn't always the very last 22 bytes -- scan backward for the signature.
+    const maxCommentLength = 0xffff;
+    const searchStart = Math.max(0, buffer.length - 22 - maxCommentLength);
+    for (let i = buffer.length - 22; i >= searchStart; i--) {
+        if (buffer.readUInt32LE(i) === EOCD_SIGNATURE) { return i; }
+    }
+    throw new Error('Buffer looks like a ZIP but no End Of Central Directory record was found.');
+}

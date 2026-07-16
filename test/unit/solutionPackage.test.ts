@@ -1,10 +1,11 @@
 import * as assert from 'assert';
-import { buildRibbonSolutionZip, hasRibbonChanges } from '../../src/ribbon/solutionPackage';
+import { buildRibbonSolutionZip, extractRibbonDiffXmlFromCustomizations, hasRibbonChanges } from '../../src/ribbon/solutionPackage';
 import type { RibbonModel } from '../../src/ribbon/ribbonModel';
 import type { EntityRibbonMetadata } from '../../src/dataverseClient';
 
 function baseMetadata(overrides: Partial<EntityRibbonMetadata> = {}): EntityRibbonMetadata {
     return {
+        metadataId: 'entity-metadata-id',
         schemaName: 'tn_JCTesttable',
         displayName: 'JC Test table',
         displayCollectionName: 'JC Test tables',
@@ -209,5 +210,25 @@ describe('hasRibbonChanges', () => {
         const withDisplayRule = baseModel();
         withDisplayRule.displayRules.push({ id: 'rule2', xml: '<DisplayRule Id="rule2" />', status: 'added' });
         assert.strictEqual(hasRibbonChanges(withDisplayRule), true);
+    });
+});
+
+describe('extractRibbonDiffXmlFromCustomizations', () => {
+    it('extracts the RibbonDiffXml block verbatim, tags included', () => {
+        const customizationsXml = `<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml><Entities><Entity><Name>tn_jctesttable</Name><RibbonDiffXml><CustomActions><CustomAction Id="x.Custom" /></CustomActions></RibbonDiffXml></Entity></Entities></ImportExportXml>`;
+
+        const result = extractRibbonDiffXmlFromCustomizations(customizationsXml);
+        assert.strictEqual(result, '<RibbonDiffXml><CustomActions><CustomAction Id="x.Custom" /></CustomActions></RibbonDiffXml>');
+    });
+
+    it('returns undefined when there is no RibbonDiffXml element at all', () => {
+        const customizationsXml = `<ImportExportXml><Entities><Entity><Name>tn_jctesttable</Name></Entity></Entities></ImportExportXml>`;
+        assert.strictEqual(extractRibbonDiffXmlFromCustomizations(customizationsXml), undefined);
+    });
+
+    it('returns undefined for a self-closing (empty) RibbonDiffXml element', () => {
+        const customizationsXml = `<ImportExportXml><Entities><Entity><Name>tn_jctesttable</Name><RibbonDiffXml /></Entity></Entities></ImportExportXml>`;
+        assert.strictEqual(extractRibbonDiffXmlFromCustomizations(customizationsXml), undefined);
     });
 });
