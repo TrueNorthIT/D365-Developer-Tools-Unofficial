@@ -65,6 +65,16 @@ interface ImportJobResponse {
     data: string | null;
 }
 
+interface SolutionHistoryResponse {
+    msdyn_status: number;
+    msdyn_result: boolean | null;
+    msdyn_exceptionmessage: string | null;
+}
+
+// msdyn_status choice values (Started/Completed/Queued -- yes, Completed is 1 and Queued is 2,
+// not the more intuitive Started/Queued/Completed ordering) -- see msdyn_solutionhistory docs.
+const SOLUTION_HISTORY_STATUS = ['Started', 'Completed', 'Queued'] as const;
+
 interface OptionSetItems {
     Options: Array<{ Value: number; Label: DataverseLabel }>;
 }
@@ -135,6 +145,14 @@ export interface ImportJobResult {
     errorText?: string;
     /** A non-fatal note Dataverse reported despite the import succeeding overall (`succeeded="warning"`) — see getImportJobResult. */
     warningText?: string;
+}
+
+export interface RibbonMetadataGenerationStatus {
+    status: 'Started' | 'Completed' | 'Queued';
+    /** Only present once status is 'Completed'. */
+    result?: 'Success' | 'Failure';
+    /** Populated by Dataverse when result is 'Failure'. */
+    exceptionMessage?: string;
 }
 
 export interface OptionValue {
@@ -509,6 +527,48 @@ export class DataverseClient {
     async deleteSolution(solutionId: string): Promise<void> {
         const url = this.apiUrl(`solutions(${solutionId})`);
         await this.request(url, { method: 'DELETE' });
+    }
+
+    // ── Ribbon metadata regeneration (regenerateRibbonMetadata — ribbonEditorPanel.ts) ──────
+    //
+    // Confirmed by capturing the exact request Command Checker's own "Regenerate ribbon metadata"
+    // button makes: an unbound POST to this action with an EMPTY body -- it takes no parameters, so
+    // there is no way to scope this to one entity; it always regenerates for the whole environment,
+    // matching its own name literally. Its response is just `{"StatusCode":201}`, no operation id to
+    // poll -- and the table Microsoft's own troubleshooting docs cite for *per-entity* progress
+    // (documented as RibbonMetadataSetToProcess) isn't actually reachable through the public Web
+    // API -- confirmed via a live 404 across both v9.0 and v9.2, despite matching the documented
+    // entity set name exactly.
+    async regenerateAllRibbonMetadata(): Promise<void> {
+        const url = this.apiUrl('RegenerateRibbonMetadataForAllEntities');
+        await this.request(url, { method: 'POST' });
+    }
+
+    // Tracks the *environment-level* operation this creates instead -- the same one Microsoft's own
+    // docs say to watch on the Solutions History page (Settings > Solutions > Solutions History).
+    // That page reads from Solution History (msdyn_solutionhistory / msdyn_solutionhistories), a
+    // real, documented, RetrieveMultiple-capable table distinct from the per-entity queue table
+    // above; msdyn_operation choice value 7 is "RibbonMetadataGeneration". Callers should capture
+    // "now" *before* calling regenerateAllRibbonMetadata and pass it here so a previous run's row
+    // isn't mistaken for this one. Returns undefined if no matching row exists yet (row creation
+    // isn't guaranteed to be instantaneous) -- callers should keep polling briefly in that case.
+    async getLatestRibbonMetadataGenerationRun(sinceUtc: Date): Promise<RibbonMetadataGenerationStatus | undefined> {
+        const url = this.apiUrl(
+            'msdyn_solutionhistories',
+            '$select=msdyn_status,msdyn_result,msdyn_exceptionmessage',
+            `$filter=msdyn_operation eq 7 and msdyn_starttime ge ${sinceUtc.toISOString()}`,
+            '$orderby=msdyn_starttime desc',
+            '$top=1',
+        );
+        const data = await this.request<ODataResponse<SolutionHistoryResponse>>(url);
+        const row = data?.value[0];
+        if (!row) { return undefined; }
+
+        return {
+            status: SOLUTION_HISTORY_STATUS[row.msdyn_status] ?? 'Started',
+            result: row.msdyn_result === null ? undefined : (row.msdyn_result ? 'Success' : 'Failure'),
+            exceptionMessage: row.msdyn_exceptionmessage ?? undefined,
+        };
     }
 
     // ── Ribbon ────────────────────────────────────────────────────────────

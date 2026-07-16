@@ -16,12 +16,13 @@ interface Props {
   onReload: () => void;
   onExport: () => void;
   onPublish: () => void;
+  onRegenerateRibbonMetadata: () => void;
 }
 
 const CONTROL_KINDS: RibbonControl['kind'][] = ['Button', 'SplitButton', 'FlyoutAnchor'];
 
 export function Toolbar(props: Props) {
-  const { entityDisplayName, entityLogicalName, ribbonLocationLabel, selection, location, availableLocations, onLocationChange, onAddTab, onAddGroup, onAddControl, onDelete, onReload, onExport, onPublish } = props;
+  const { entityDisplayName, entityLogicalName, ribbonLocationLabel, selection, location, availableLocations, onLocationChange, onAddTab, onAddGroup, onAddControl, onDelete, onReload, onExport, onPublish, onRegenerateRibbonMetadata } = props;
   const tabId = selectionTabId(selection);
   const groupId = selectionGroupId(selection);
 
@@ -58,6 +59,13 @@ export function Toolbar(props: Props) {
         <button type="button" onClick={onReload}>Reload from Server</button>
         <button type="button" onClick={onExport}>Export RibbonDiffXml</button>
         <button type="button" className="primary" onClick={onPublish}>Publish to Dynamics</button>
+        <button
+          type="button"
+          onClick={onRegenerateRibbonMetadata}
+          title="Regenerates ribbon metadata for the ENTIRE environment (every table, not just this one) -- can take 15+ minutes."
+        >
+          Regenerate Ribbon Metadata…
+        </button>
       </div>
     </div>
   );

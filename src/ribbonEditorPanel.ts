@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import type { DataverseClient, Publisher, RibbonLocationFilter } from './dataverseClient';
+import type { DataverseClient, Publisher, RibbonLocationFilter, RibbonMetadataGenerationStatus } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
 import { buildRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
@@ -41,6 +41,10 @@ export class RibbonEditorPanel {
     // Guards against a second "Publish to Dynamics" starting while one is already running for this
     // panel (there's no webview-side busy state disabling the button -- see publishToDynamics).
     private _publishing = false;
+
+    // Same guard, for regenerateRibbonMetadata -- that operation affects the whole environment and
+    // can run for many minutes, so it's especially worth not letting two overlap.
+    private _regeneratingRibbonMetadata = false;
 
     static async createOrShow(
         extensionUri: vscode.Uri,
@@ -123,6 +127,9 @@ export class RibbonEditorPanel {
                 break;
             case 'publishToDynamics':
                 await this.publishToDynamics(msg.model as RibbonModel);
+                break;
+            case 'regenerateRibbonMetadata':
+                await this.regenerateRibbonMetadata();
                 break;
         }
     }
@@ -333,6 +340,64 @@ export class RibbonEditorPanel {
         await this.loadRibbon();
     }
 
+    // RegenerateRibbonMetadataForAllEntities (see dataverseClient.ts) always regenerates for the
+    // whole environment -- there is no way to scope it to just this entity -- and can take 15+
+    // minutes running as a background server-side job. Confirmed by capturing Command Checker's own
+    // "Regenerate ribbon metadata" button's network request: this is the exact same call.
+    //
+    // Tracked the same way Solutions History tracks it in the maker portal -- via Solution History
+    // (getLatestRibbonMetadataGenerationRun), NOT the per-entity queue table an earlier version of
+    // this method tried and gave up on after a live 404 confirmed it isn't reachable. If Solution
+    // History itself turns out to be unreachable in some environment too, waitForRibbonMetadataGeneration
+    // degrades to just pointing the user at Solutions History manually rather than erroring.
+    private async regenerateRibbonMetadata(): Promise<void> {
+        if (this._regeneratingRibbonMetadata) {
+            vscode.window.showWarningMessage('D365: A ribbon metadata regeneration is already in progress.');
+            return;
+        }
+
+        const confirmed = await vscode.window.showWarningMessage(
+            `Regenerate ribbon metadata for the connected environment? This affects ALL tables, not just ` +
+            `'${this.entityLogicalName}' -- it's the same operation as Command Checker's "Regenerate ribbon ` +
+            `metadata" button, and can take 15 minutes or longer running in the background.`,
+            { modal: true },
+            'Regenerate',
+        );
+        if (confirmed !== 'Regenerate') { return; }
+
+        this._regeneratingRibbonMetadata = true;
+        try {
+            // A few seconds of slack for clock skew between this machine and Dataverse, so we don't
+            // miss the row this run creates by filtering it out as "before we started".
+            const sinceUtc = new Date(Date.now() - 5_000);
+            await this.client.regenerateAllRibbonMetadata();
+            log(`Ribbon editor ('${this.entityLogicalName}'): triggered RegenerateRibbonMetadataForAllEntities`);
+
+            const outcome = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'D365: Regenerating ribbon metadata for the environment…', cancellable: true },
+                (progress, token) => waitForRibbonMetadataGeneration(this.client, sinceUtc, progress, token),
+            );
+
+            if (outcome.outcome === 'success') {
+                vscode.window.showInformationMessage('D365: Ribbon metadata regeneration completed successfully.');
+            } else if (outcome.outcome === 'failure') {
+                vscode.window.showErrorMessage(
+                    `D365: Ribbon metadata regeneration failed${outcome.exceptionMessage ? `: ${outcome.exceptionMessage}` : '.'}`,
+                );
+            } else {
+                vscode.window.showInformationMessage(
+                    'D365: Ribbon metadata regeneration started for the environment, but its progress could not be tracked ' +
+                    'from here. Check Settings > Solutions > Solutions History in the maker portal for its status.',
+                );
+            }
+        } catch (err) {
+            logError(`ribbon editor ('${this.entityLogicalName}') regenerateAllRibbonMetadata`, err);
+            vscode.window.showErrorMessage(`D365: Failed to start ribbon metadata regeneration: ${errMsg(err)}`);
+        } finally {
+            this._regeneratingRibbonMetadata = false;
+        }
+    }
+
     private post(message: unknown): void {
         void this.panel.webview.postMessage(message);
     }
@@ -382,6 +447,55 @@ async function waitForImportJob(client: DataverseClient, importJobId: string, ti
 
 function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+type RibbonMetadataGenerationOutcome =
+    | { outcome: 'success' }
+    | { outcome: 'failure'; exceptionMessage?: string }
+    // Cancelled, timed out, or Solution History itself wasn't reachable -- in every case the
+    // operation may still be running server-side, this extension just can't say more about it.
+    | { outcome: 'unknown' };
+
+// Polls Solution History (getLatestRibbonMetadataGenerationRun) for the row this run's
+// regenerateAllRibbonMetadata call created, identified by starting after `sinceUtc`.
+async function waitForRibbonMetadataGeneration(
+    client: DataverseClient,
+    sinceUtc: Date,
+    progress: vscode.Progress<{ message?: string }>,
+    token: vscode.CancellationToken,
+    timeoutMs = 30 * 60_000,
+    intervalMs = 5_000,
+): Promise<RibbonMetadataGenerationOutcome> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        if (token.isCancellationRequested) { return { outcome: 'unknown' }; }
+
+        let status: RibbonMetadataGenerationStatus | undefined;
+        try {
+            status = await client.getLatestRibbonMetadataGenerationRun(sinceUtc);
+        } catch (err) {
+            // Mirrors the confirmed-404 per-entity queue table -- if Solution History itself isn't
+            // reachable in this environment either, stop polling rather than hammering a broken
+            // endpoint for up to 30 minutes.
+            logError('ribbon editor regenerateRibbonMetadata: could not read Solution History', err);
+            return { outcome: 'unknown' };
+        }
+
+        if (status?.status === 'Completed') {
+            return status.result === 'Failure'
+                ? { outcome: 'failure', exceptionMessage: status.exceptionMessage }
+                : { outcome: 'success' };
+        }
+
+        const elapsedMin = Math.round((Date.now() - start) / 60_000);
+        progress.report({
+            message: status
+                ? `${status.status}… (${elapsedMin}m elapsed)`
+                : `Waiting for the operation to be recorded… (${elapsedMin}m elapsed)`,
+        });
+        await delay(intervalMs);
+    }
+    return { outcome: 'unknown' };
 }
 
 // ── HTML shell ───────────────────────────────────────────────────────────────

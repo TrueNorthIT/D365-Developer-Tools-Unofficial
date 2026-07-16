@@ -171,6 +171,7 @@ Each entity/location combination opens in its own editor tab, since they're mate
 - Add new tabs, groups, and controls, or mark existing ones for deletion
 - **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution
 - **Publish to Dynamics** — imports a small throwaway unmanaged solution carrying just your changes, publishes the entity, and removes the temporary solution. You'll be prompted to pick a publisher if more than one is available.
+- **Regenerate Ribbon Metadata…** — triggers the same environment-wide operation as Command Checker's own button, and tracks its progress via Solution History
 
 ## Title Bar Actions
 

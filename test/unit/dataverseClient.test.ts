@@ -779,6 +779,83 @@ describe('DataverseClient', () => {
         });
     });
 
+    // ── regenerateAllRibbonMetadata ──────────────────────────────────────
+
+    describe('regenerateAllRibbonMetadata', () => {
+        it('POSTs to RegenerateRibbonMetadataForAllEntities with no body', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '{"@odata.context":"...","StatusCode":201}' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.regenerateAllRibbonMetadata();
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/RegenerateRibbonMetadataForAllEntities`);
+            assert.strictEqual(requestInit.method, 'POST');
+            assert.strictEqual(requestInit.body, undefined, 'the real action takes no parameters -- confirmed against a live capture (content-length: 0)');
+        });
+    });
+
+    // ── getLatestRibbonMetadataGenerationRun ─────────────────────────────
+
+    describe('getLatestRibbonMetadataGenerationRun', () => {
+        it('filters by operation=7 (RibbonMetadataGeneration) and the given start time', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const since = new Date('2026-07-16T10:00:00.000Z');
+            await client.getLatestRibbonMetadataGenerationRun(since);
+
+            const [url] = fetchStub.firstCall.args;
+            assert.strictEqual(
+                url,
+                `${ENV_URL}/api/data/v9.2/msdyn_solutionhistories?$select=msdyn_status,msdyn_result,msdyn_exceptionmessage` +
+                `&$filter=msdyn_operation eq 7 and msdyn_starttime ge 2026-07-16T10:00:00.000Z` +
+                `&$orderby=msdyn_starttime desc&$top=1`,
+            );
+        });
+
+        it('returns undefined when no matching row exists yet', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getLatestRibbonMetadataGenerationRun(new Date());
+            assert.strictEqual(result, undefined);
+        });
+
+        it('maps a Started row', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({
+                value: [{ msdyn_status: 0, msdyn_result: null, msdyn_exceptionmessage: null }],
+            }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getLatestRibbonMetadataGenerationRun(new Date());
+            assert.deepStrictEqual(result, { status: 'Started', result: undefined, exceptionMessage: undefined });
+        });
+
+        it('maps a Completed/Success row', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({
+                value: [{ msdyn_status: 1, msdyn_result: true, msdyn_exceptionmessage: null }],
+            }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getLatestRibbonMetadataGenerationRun(new Date());
+            assert.deepStrictEqual(result, { status: 'Completed', result: 'Success', exceptionMessage: undefined });
+        });
+
+        it('maps a Completed/Failure row with an exception message', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({
+                value: [{ msdyn_status: 1, msdyn_result: false, msdyn_exceptionmessage: 'Something broke' }],
+            }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getLatestRibbonMetadataGenerationRun(new Date());
+            assert.deepStrictEqual(result, { status: 'Completed', result: 'Failure', exceptionMessage: 'Something broke' });
+        });
+
+        it('maps a Queued row', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({
+                value: [{ msdyn_status: 2, msdyn_result: null, msdyn_exceptionmessage: null }],
+            }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getLatestRibbonMetadataGenerationRun(new Date());
+            assert.deepStrictEqual(result, { status: 'Queued', result: undefined, exceptionMessage: undefined });
+        });
+    });
+
     // ── getEntityRibbonXml ───────────────────────────────────────────────
 
     describe('getEntityRibbonXml', () => {
