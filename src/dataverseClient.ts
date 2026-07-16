@@ -1,3 +1,4 @@
+import { XMLParser } from 'fast-xml-parser';
 import type { ConnectionManager } from './connectionManager';
 import { log } from './logger';
 import { decompressRibbonPayload } from './ribbon/decompressRibbon';
@@ -24,6 +25,16 @@ interface EntityDefinitionResponse {
     ObjectTypeCode: number | null;
 }
 
+interface EntityRibbonMetadataResponse {
+    SchemaName: string;
+    DisplayName: DataverseLabel;
+    DisplayCollectionName: DataverseLabel;
+    Description: DataverseLabel;
+    EntitySetName: string;
+    OwnershipType: string | null;
+    IntroducedVersion: string | null;
+}
+
 interface AttributeDefinitionResponse {
     LogicalName: string;
     SchemaName: string;
@@ -41,6 +52,17 @@ interface SolutionResponse {
 
 interface SolutionComponentResponse {
     objectid: string;
+}
+
+interface PublisherResponse {
+    publisherid: string;
+    uniquename: string;
+    friendlyname: string;
+}
+
+interface ImportJobResponse {
+    completedon: string | null;
+    data: string | null;
 }
 
 interface OptionSetItems {
@@ -72,6 +94,20 @@ export interface EntityDefinition {
     objectTypeCode?: number;
 }
 
+// The subset of an entity's metadata that identifies it -- used to build the <EntityInfo> block a
+// ribbon-only solution import apparently needs (see solutionPackage.ts). Fetched live and used
+// verbatim, never guessed, precisely because this is metadata that could matter if it were wrong.
+export interface EntityRibbonMetadata {
+    schemaName: string;
+    displayName: string;
+    displayCollectionName: string;
+    description: string;
+    entitySetName: string;
+    /** e.g. "UserOwned", "OrganizationOwned" -- the OwnershipTypes enum member name Dataverse itself returned. */
+    ownershipType: string;
+    introducedVersion: string;
+}
+
 export interface AttributeDefinition {
     logicalName: string;
     schemaName: string;
@@ -85,6 +121,20 @@ export interface Solution {
     solutionId: string;
     uniqueName: string;
     friendlyName: string;
+}
+
+export interface Publisher {
+    publisherId: string;
+    uniqueName: string;
+    friendlyName: string;
+}
+
+export interface ImportJobResult {
+    completed: boolean;
+    success: boolean;
+    errorText?: string;
+    /** A non-fatal note Dataverse reported despite the import succeeding overall (`succeeded="warning"`) — see getImportJobResult. */
+    warningText?: string;
 }
 
 export interface OptionValue {
@@ -117,6 +167,31 @@ export class DataverseClient {
             iconVectorName: e.IconVectorName || undefined,
             objectTypeCode: typeof e.ObjectTypeCode === 'number' ? e.ObjectTypeCode : undefined,
         })).sort((a, b) => a.logicalName.localeCompare(b.logicalName));
+    }
+
+    // Live identity metadata for an entity -- used to build the <EntityInfo> block a ribbon-only
+    // solution import needs (see solutionPackage.ts / getEntityRibbonMetadata's doc comment). Only
+    // fields this method is confident it can map correctly from the Web API are fetched; anything
+    // else in a real EntityInfo export falls back to a fixed, verified-safe default rather than a
+    // guessed live value (see solutionPackage.ts).
+    async getEntityRibbonMetadata(entityLogicalName: string): Promise<EntityRibbonMetadata> {
+        const url = this.apiUrl(
+            `EntityDefinitions(LogicalName='${entityLogicalName}')`,
+            '$select=SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion',
+        );
+
+        const data = await this.request<EntityRibbonMetadataResponse>(url);
+        if (!data) { throw new Error(`No metadata returned for entity '${entityLogicalName}'.`); }
+
+        return {
+            schemaName: data.SchemaName,
+            displayName: extractLabel(data.DisplayName) || data.SchemaName,
+            displayCollectionName: extractLabel(data.DisplayCollectionName) || data.SchemaName,
+            description: extractLabel(data.Description),
+            entitySetName: data.EntitySetName,
+            ownershipType: data.OwnershipType || 'UserOwned',
+            introducedVersion: data.IntroducedVersion || '1.0',
+        };
     }
 
     async getAttributes(entityLogicalName: string): Promise<AttributeDefinition[]> {
@@ -152,6 +227,24 @@ export class DataverseClient {
             solutionId: s.solutionid,
             uniqueName: s.uniquename,
             friendlyName: s.friendlyname,
+        }));
+    }
+
+    // isreadonly filters out Microsoft-owned/system publishers (e.g. "MicrosoftCorporation") that
+    // can't meaningfully be used as the publisher of a solution the user creates.
+    async getPublishers(): Promise<Publisher[]> {
+        const url = this.apiUrl(
+            'publishers',
+            '$select=publisherid,uniquename,friendlyname',
+            '$filter=isreadonly eq false',
+            '$orderby=friendlyname',
+        );
+
+        const raw = await this.fetchPaged<PublisherResponse>(url);
+        return raw.map(p => ({
+            publisherId: p.publisherid,
+            uniqueName: p.uniquename,
+            friendlyName: p.friendlyname,
         }));
     }
 
@@ -347,6 +440,77 @@ export class DataverseClient {
         });
     }
 
+    // ── Solution import (publishToDynamics — ribbonEditorPanel.ts) ──────────
+
+    // Imports a solution zip (see solutionPackage.ts). `importJobId` is caller-generated so the
+    // caller can immediately start polling getImportJobResult with it -- the action call itself
+    // completes synchronously, but ImportJob's own `data` column is the documented way to confirm
+    // success/failure per component, not just "the HTTP call didn't throw".
+    async importSolution(zipBase64: string, importJobId: string): Promise<void> {
+        const url = this.apiUrl('ImportSolution');
+        await this.request(url, {
+            method: 'POST',
+            body: {
+                CustomizationFile: zipBase64,
+                // Every publish targets a control this same feature (or the user, editing again)
+                // may well have already customized on a *previous* publish -- since each import uses
+                // a brand-new throwaway solution, that prior customization is, from Dataverse's
+                // perspective, "someone else's" existing unmanaged customization. `false` here tells
+                // it not to overwrite that, which can silently drop the re-add half of a modified
+                // control's diff (hide applies, re-add doesn't) while still reporting success. `true`
+                // ensures this import's version always wins, which is exactly what we want when it's
+                // our own tool re-publishing an edit to something it already customized.
+                OverwriteUnmanagedCustomizations: true,
+                PublishWorkflows: false,
+                ImportJobId: importJobId,
+            },
+        });
+    }
+
+    // Reads back the result of a prior importSolution call. `completed: false` means the job hasn't
+    // finished yet (completedon is still null) -- the caller should wait briefly and poll again.
+    async getImportJobResult(importJobId: string): Promise<ImportJobResult> {
+        const url = this.apiUrl(`importjobs(${importJobId})`, '$select=completedon,data');
+        const job = await this.request<ImportJobResponse>(url);
+
+        if (!job?.completedon || !job.data) { return { completed: false, success: false }; }
+
+        // `data` is an XML document rooted at <importexportxml succeeded="true|false|warning" ...>,
+        // with a nested breakdown by component/subhandler each carrying their own <result result=
+        // "success|failure" .../> node (confirmed against a real import: a ribbon change succeeded
+        // -- <entitySubhandlers><entityRibbon processed="true"><result result="success" /> -- while a
+        // separate, generic entity-level dependency check for the same entity logged its own
+        // non-fatal <result result="failure" errortext="The ribbon item ... is dependent on ..."/>
+        // note without actually blocking anything). The root `succeeded` attribute is the
+        // authoritative overall verdict, matching what Dataverse's own import history shows -- NOT
+        // "does some `result` node somewhere in this tree say failure", which this used to check and
+        // which misreported that exact non-fatal note as a hard failure.
+        const parsed = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' }).parse(job.data) as Record<string, unknown>;
+        const root = asRecord(parsed.importexportxml);
+        const succeeded = root?.['@_succeeded'];
+
+        if (succeeded === 'false' || succeeded === undefined) {
+            const failure = findFailedResult(parsed);
+            return { completed: true, success: false, errorText: failure?.['@_errortext'] || failure?.['@_errorcode'] || 'Import failed.' };
+        }
+
+        // succeeded === 'true' or 'warning' -- both treated as success, but surface a warning's note
+        // (if any) so the caller can tell the user what Dataverse flagged without treating it as fatal.
+        const warning = succeeded === 'warning' ? findFailedResult(parsed) : undefined;
+        return { completed: true, success: true, warningText: warning?.['@_errortext'] || undefined };
+    }
+
+    async publishEntity(entityLogicalName: string): Promise<void> {
+        const url = this.apiUrl('PublishXml');
+        const parameterXml = `<importexportxml><entities><entity>${escapeXmlText(entityLogicalName)}</entity></entities></importexportxml>`;
+        await this.request(url, { method: 'POST', body: { ParameterXml: parameterXml } });
+    }
+
+    async deleteSolution(solutionId: string): Promise<void> {
+        const url = this.apiUrl(`solutions(${solutionId})`);
+        await this.request(url, { method: 'DELETE' });
+    }
+
     // ── Ribbon ────────────────────────────────────────────────────────────
 
     // Retrieves the ribbon for an entity, scoped to a specific UI location — the same source
@@ -470,4 +634,41 @@ function extractLabel(label: DataverseLabel | undefined): string {
         label.LocalizedLabels[0]?.Label ??
         ''
     );
+}
+
+// Recursively searches a parsed ImportJob `data` document for the first `result` node whose
+// `@_result` attribute is "failure" -- these can appear at any depth (solution-level, then per
+// component type, then per component), and only failing ones carry `@_errortext`/`@_errorcode`.
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function findFailedResult(node: unknown): Record<string, string> | undefined {
+    if (Array.isArray(node)) {
+        for (const item of node) {
+            const found = findFailedResult(item);
+            if (found) { return found; }
+        }
+        return undefined;
+    }
+    if (node && typeof node === 'object') {
+        const obj = node as Record<string, unknown>;
+        if (obj.result !== undefined) {
+            const results = Array.isArray(obj.result) ? obj.result : [obj.result];
+            for (const r of results) {
+                if (r && typeof r === 'object' && (r as Record<string, unknown>)['@_result'] === 'failure') {
+                    return r as Record<string, string>;
+                }
+            }
+        }
+        for (const value of Object.values(obj)) {
+            const found = findFailedResult(value);
+            if (found) { return found; }
+        }
+    }
+    return undefined;
+}
+
+function escapeXmlText(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

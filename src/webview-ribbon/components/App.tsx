@@ -52,6 +52,7 @@ export function App() {
         onDelete={() => dispatch({ type: 'local/deleteSelected' })}
         onReload={() => post({ type: 'reloadFromServer' })}
         onExport={() => post({ type: 'exportRibbonDiffXml', model })}
+        onPublish={() => post({ type: 'publishToDynamics', model })}
       />
       <div id="ribbon-body">
         <RibbonPreview

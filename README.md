@@ -170,8 +170,7 @@ Each entity/location combination opens in its own editor tab, since they're mate
 - Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules
 - Add new tabs, groups, and controls, or mark existing ones for deletion
 - **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution
-
-Edits stay in-memory in the editor; publishing the diff back to Dataverse (e.g. via a solution import) is a manual step for now.
+- **Publish to Dynamics** — imports a small throwaway unmanaged solution carrying just your changes, publishes the entity, and removes the temporary solution. You'll be prompted to pick a publisher if more than one is available.
 
 ## Title Bar Actions
 

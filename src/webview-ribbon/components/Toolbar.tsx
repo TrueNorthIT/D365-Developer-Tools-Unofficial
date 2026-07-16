@@ -15,12 +15,13 @@ interface Props {
   onDelete: () => void;
   onReload: () => void;
   onExport: () => void;
+  onPublish: () => void;
 }
 
 const CONTROL_KINDS: RibbonControl['kind'][] = ['Button', 'SplitButton', 'FlyoutAnchor'];
 
 export function Toolbar(props: Props) {
-  const { entityDisplayName, entityLogicalName, ribbonLocationLabel, selection, location, availableLocations, onLocationChange, onAddTab, onAddGroup, onAddControl, onDelete, onReload, onExport } = props;
+  const { entityDisplayName, entityLogicalName, ribbonLocationLabel, selection, location, availableLocations, onLocationChange, onAddTab, onAddGroup, onAddControl, onDelete, onReload, onExport, onPublish } = props;
   const tabId = selectionTabId(selection);
   const groupId = selectionGroupId(selection);
 
@@ -55,7 +56,8 @@ export function Toolbar(props: Props) {
         <button type="button" disabled={!selection} onClick={onDelete}>Delete / Restore</button>
         <span className="ribbon-toolbar-spacer" />
         <button type="button" onClick={onReload}>Reload from Server</button>
-        <button type="button" className="primary" onClick={onExport}>Export RibbonDiffXml</button>
+        <button type="button" onClick={onExport}>Export RibbonDiffXml</button>
+        <button type="button" className="primary" onClick={onPublish}>Publish to Dynamics</button>
       </div>
     </div>
   );

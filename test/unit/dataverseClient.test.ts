@@ -241,6 +241,70 @@ describe('DataverseClient', () => {
         });
     });
 
+    // ── getEntityRibbonMetadata ──────────────────────────────────────────
+
+    describe('getEntityRibbonMetadata', () => {
+        it('requests the expected fields and maps labels/fallbacks', async () => {
+            fetchStub.resolves(fakeResponse({
+                text: async () => JSON.stringify({
+                    SchemaName: 'tn_JCTesttable',
+                    DisplayName: label('JC Test table'),
+                    DisplayCollectionName: label('JC Test tables'),
+                    Description: label(''),
+                    EntitySetName: 'tn_jctesttables',
+                    OwnershipType: 'UserOwned',
+                    IntroducedVersion: '1.0',
+                }),
+            }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityRibbonMetadata('tn_jctesttable');
+
+            const [url] = fetchStub.firstCall.args;
+            assert.strictEqual(
+                url,
+                `${ENV_URL}/api/data/v9.2/EntityDefinitions(LogicalName='tn_jctesttable')?$select=SchemaName,DisplayName,DisplayCollectionName,Description,EntitySetName,OwnershipType,IntroducedVersion`,
+            );
+            assert.deepStrictEqual(result, {
+                schemaName: 'tn_JCTesttable',
+                displayName: 'JC Test table',
+                displayCollectionName: 'JC Test tables',
+                description: '',
+                entitySetName: 'tn_jctesttables',
+                ownershipType: 'UserOwned',
+                introducedVersion: '1.0',
+            });
+        });
+
+        it('falls back to SchemaName for missing display names, "UserOwned" for missing ownership type, and "1.0" for missing introduced version', async () => {
+            fetchStub.resolves(fakeResponse({
+                text: async () => JSON.stringify({
+                    SchemaName: 'tn_JCTesttable',
+                    DisplayName: label(undefined),
+                    DisplayCollectionName: label(undefined),
+                    Description: label(undefined),
+                    EntitySetName: 'tn_jctesttables',
+                    OwnershipType: null,
+                    IntroducedVersion: null,
+                }),
+            }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getEntityRibbonMetadata('tn_jctesttable');
+
+            assert.strictEqual(result.displayName, 'tn_JCTesttable');
+            assert.strictEqual(result.displayCollectionName, 'tn_JCTesttable');
+            assert.strictEqual(result.ownershipType, 'UserOwned');
+            assert.strictEqual(result.introducedVersion, '1.0');
+        });
+
+        it('throws when no metadata is returned', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await assert.rejects(() => client.getEntityRibbonMetadata('tn_jctesttable'), /No metadata returned/);
+        });
+    });
+
     // ── getSolutions ─────────────────────────────────────────────────────
 
     describe('getSolutions', () => {
@@ -579,6 +643,139 @@ describe('DataverseClient', () => {
                 SolutionUniqueName: 'MySolution',
                 AddRequiredComponents: false,
             });
+        });
+    });
+
+    // ── getPublishers ─────────────────────────────────────────────────────
+
+    describe('getPublishers', () => {
+        it('requests only non-readonly publishers and maps fields', async () => {
+            fetchStub.resolves(fakeResponse({
+                json: async () => ({
+                    value: [
+                        { publisherid: 'pub-1', uniquename: 'mypublisher', friendlyname: 'My Publisher' },
+                    ],
+                }),
+            }));
+
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getPublishers();
+
+            const [url] = fetchStub.firstCall.args;
+            assert.match(url, /\$filter=isreadonly eq false/);
+            assert.deepStrictEqual(result, [{ publisherId: 'pub-1', uniqueName: 'mypublisher', friendlyName: 'My Publisher' }]);
+        });
+    });
+
+    // ── importSolution ───────────────────────────────────────────────────
+
+    describe('importSolution', () => {
+        it('POSTs the zip and fixed import parameters to the ImportSolution action', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.importSolution('base64zip', 'job-guid-1');
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/ImportSolution`);
+            assert.strictEqual(requestInit.method, 'POST');
+            assert.deepStrictEqual(JSON.parse(requestInit.body), {
+                CustomizationFile: 'base64zip',
+                OverwriteUnmanagedCustomizations: true,
+                PublishWorkflows: false,
+                ImportJobId: 'job-guid-1',
+            });
+        });
+    });
+
+    // ── getImportJobResult ───────────────────────────────────────────────
+
+    describe('getImportJobResult', () => {
+        it('reports not completed when completedon is null, without inspecting data', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ completedon: null, data: null }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getImportJobResult('job-guid-1');
+
+            const [url] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/importjobs(job-guid-1)?$select=completedon,data`);
+            assert.deepStrictEqual(result, { completed: false, success: false });
+        });
+
+        it('reports success when the root succeeded="true" and there is no failing result node', async () => {
+            const data = '<importexportxml succeeded="true"><solutionManifest><UniqueName>test</UniqueName><result result="success" /></solutionManifest></importexportxml>';
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ completedon: '2024-01-01T00:00:00Z', data }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getImportJobResult('job-guid-1');
+
+            assert.deepStrictEqual(result, { completed: true, success: true, warningText: undefined });
+        });
+
+        it('reports failure with the errortext when the root succeeded="false"', async () => {
+            const data = '<importexportxml succeeded="false"><solutionManifest><UniqueName>test</UniqueName>'
+                + '<result result="failure" errorcode="0x80040216" errortext="Something went wrong" />'
+                + '</solutionManifest></importexportxml>';
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ completedon: '2024-01-01T00:00:00Z', data }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getImportJobResult('job-guid-1');
+
+            assert.deepStrictEqual(result, { completed: true, success: false, errorText: 'Something went wrong' });
+        });
+
+        it('reports failure when the root succeeded attribute is missing entirely (ambiguous -- defaults to failure, not success)', async () => {
+            const data = '<importexportxml><solutionManifest><UniqueName>test</UniqueName><result result="success" /></solutionManifest></importexportxml>';
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ completedon: '2024-01-01T00:00:00Z', data }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getImportJobResult('job-guid-1');
+
+            assert.strictEqual(result.success, false);
+        });
+
+        it('reports success but surfaces a warningText when succeeded="warning" -- a non-fatal nested failure note must not block publishing', async () => {
+            // Real shape confirmed against a live import: the overall root says "warning" (Dynamics'
+            // own import history treats this as successful) even though a generic entity-level
+            // dependency check logs its own non-fatal <result result="failure"> note, separate from
+            // the ribbon subhandler that actually applied successfully.
+            const data = '<importexportxml succeeded="warning">'
+                + '<entities><entity id="tn_jctesttable" processed="false">'
+                + '<result result="success" errorcode="0" errortext="" />'
+                + '<result result="failure" errorcode="0x8004F105" errortext="The ribbon item \'x\' is dependent on &lt;CommandDefinition Id=&quot;y&quot; /&gt;." />'
+                + '</entity></entities>'
+                + '<entitySubhandlers><entityRibbon processed="true"><result result="success" errorcode="0" errortext="" /></entityRibbon></entitySubhandlers>'
+                + '</importexportxml>';
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ completedon: '2024-01-01T00:00:00Z', data }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            const result = await client.getImportJobResult('job-guid-1');
+
+            assert.strictEqual(result.success, true);
+            assert.match(result.warningText ?? '', /is dependent on/);
+        });
+    });
+
+    // ── publishEntity ────────────────────────────────────────────────────
+
+    describe('publishEntity', () => {
+        it('POSTs a ParameterXml scoped to just the one entity', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.publishEntity('account');
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/PublishXml`);
+            const body = JSON.parse(requestInit.body);
+            assert.strictEqual(body.ParameterXml, '<importexportxml><entities><entity>account</entity></entities></importexportxml>');
+        });
+    });
+
+    // ── deleteSolution ───────────────────────────────────────────────────
+
+    describe('deleteSolution', () => {
+        it('sends a DELETE to the solution record', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => '' }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.deleteSolution('sol-1');
+
+            const [url, requestInit] = fetchStub.firstCall.args;
+            assert.strictEqual(url, `${ENV_URL}/api/data/v9.2/solutions(sol-1)`);
+            assert.strictEqual(requestInit.method, 'DELETE');
         });
     });
 

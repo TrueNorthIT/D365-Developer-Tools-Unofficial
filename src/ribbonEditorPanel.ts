@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
-import type { DataverseClient, RibbonLocationFilter } from './dataverseClient';
+import { randomUUID } from 'crypto';
+import type { DataverseClient, Publisher, RibbonLocationFilter } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
 import { buildRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
+import { buildRibbonSolutionZip, hasRibbonChanges } from './ribbon/solutionPackage';
 import type { RibbonModel } from './ribbon/ribbonModel';
 import { log, logError } from './logger';
 
@@ -19,8 +21,13 @@ const RIBBON_LOCATION_LABELS: Record<RibbonLocationFilter, string> = {
 // this codebase's first use of `createWebviewPanel` — so it follows the same conventions
 // (nonce-based CSP, post()/handleMessage()) but manages its own panel lifecycle.
 //
-// Import/publish back to Dataverse is out of scope for now: edits stay in-memory in the webview and
-// "Export RibbonDiffXml" just opens the generated XML as a new, unsaved document.
+// "Export RibbonDiffXml" opens the generated XML as a new, unsaved document for manual application.
+// "Publish to Dynamics" (publishToDynamics below) instead applies it directly: a small throwaway
+// unmanaged solution carrying just the ribbon diff is imported, the entity is published, and the
+// temporary solution is removed. Note that removing that solution does NOT revert the ribbon change
+// itself -- unmanaged solutions are just a labeled grouping over the org's one shared active layer,
+// so once imported the change persists like any other unmanaged customization regardless of the
+// transport solution's fate. "Temporary" only means no solution-list clutter is left behind.
 export class RibbonEditorPanel {
     private static readonly panels = new Map<string, RibbonEditorPanel>();
 
@@ -30,6 +37,10 @@ export class RibbonEditorPanel {
     // Caches resolved icon data URIs by ribbon image reference ($webresource:… or /_imgs/…).
     // `null` = looked up, none found (don't retry).
     private readonly _iconCache = new Map<string, string | null>();
+
+    // Guards against a second "Publish to Dynamics" starting while one is already running for this
+    // panel (there's no webview-side busy state disabling the button -- see publishToDynamics).
+    private _publishing = false;
 
     static async createOrShow(
         extensionUri: vscode.Uri,
@@ -109,6 +120,9 @@ export class RibbonEditorPanel {
                 break;
             case 'exportRibbonDiffXml':
                 await this.exportRibbonDiffXml(msg.model as RibbonModel);
+                break;
+            case 'publishToDynamics':
+                await this.publishToDynamics(msg.model as RibbonModel);
                 break;
         }
     }
@@ -195,6 +209,130 @@ export class RibbonEditorPanel {
         await vscode.window.showTextDocument(doc, { preview: false });
     }
 
+    private async publishToDynamics(model: RibbonModel): Promise<void> {
+        if (this._publishing) {
+            vscode.window.showWarningMessage('D365: A publish to Dynamics is already in progress for this ribbon.');
+            return;
+        }
+
+        if (!hasRibbonChanges(model)) {
+            vscode.window.showInformationMessage('D365: No ribbon changes to publish.');
+            return;
+        }
+
+        const entityLabel = this.entityDisplayName || this.entityLogicalName;
+        const confirmed = await vscode.window.showWarningMessage(
+            `Publish ribbon changes to '${entityLabel}' on the connected environment? This imports a ` +
+            `temporary solution to apply the changes, publishes them, then removes the temporary ` +
+            `solution. The ribbon change itself is not automatically undoable afterward.`,
+            { modal: true },
+            'Publish',
+        );
+        if (confirmed !== 'Publish') { return; }
+
+        const publisher = await pickPublisher(this.client);
+        if (!publisher) { return; }
+
+        this._publishing = true;
+        try {
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `D365: Publishing ribbon changes to '${entityLabel}'…`, cancellable: false },
+                progress => this.runPublish(model, publisher, entityLabel, progress),
+            );
+        } finally {
+            this._publishing = false;
+        }
+    }
+
+    private async runPublish(
+        model: RibbonModel,
+        publisher: Publisher,
+        entityLabel: string,
+        progress: vscode.Progress<{ message?: string }>,
+    ): Promise<void> {
+        progress.report({ message: 'Reading entity metadata…' });
+        const entityMetadata = await this.client.getEntityRibbonMetadata(this.entityLogicalName);
+
+        const ribbonDiffXml = buildRibbonDiffXml(model);
+        const solutionUniqueName = `d365vscodetools_ribbon_${Date.now()}`;
+        const zip = buildRibbonSolutionZip({
+            entityLogicalName: this.entityLogicalName,
+            entityDisplayName: this.entityDisplayName,
+            entityMetadata,
+            ribbonDiffXml,
+            publisherUniqueName: publisher.uniqueName,
+            solutionUniqueName,
+            solutionFriendlyName: `Ribbon changes: ${entityLabel} (temporary)`,
+        });
+
+        progress.report({ message: 'Importing temporary solution…' });
+        const importJobId = randomUUID();
+        log(`Ribbon editor ('${this.entityLogicalName}'): importing temporary solution '${solutionUniqueName}' (job ${importJobId})`);
+        try {
+            await this.client.importSolution(zip.toString('base64'), importJobId);
+        } catch (err) {
+            logError(`ribbon editor ('${this.entityLogicalName}') importSolution`, err);
+            vscode.window.showErrorMessage(`D365: Publish failed while importing the temporary solution: ${errMsg(err)}`);
+            return;
+        }
+
+        const result = await waitForImportJob(this.client, importJobId);
+        if (!result.success) {
+            log(`Ribbon editor ('${this.entityLogicalName}'): import job ${importJobId} did not succeed: ${result.errorText}`);
+            vscode.window.showErrorMessage(
+                `D365: Publish failed: ${result.errorText ?? 'the import did not complete.'} ` +
+                `The temporary solution '${solutionUniqueName}' was left in place for inspection.`,
+            );
+            return;
+        }
+        if (result.warningText) {
+            log(`Ribbon editor ('${this.entityLogicalName}'): import job ${importJobId} succeeded with a warning: ${result.warningText}`);
+        }
+
+        // The solution record itself (found by unique name) is what gets published/deleted below --
+        // ImportSolution doesn't return its id directly.
+        const solutions = await this.client.getSolutions().catch(() => []);
+        const importedSolution = solutions.find(s => s.uniqueName === solutionUniqueName);
+
+        progress.report({ message: 'Publishing…' });
+        try {
+            await this.client.publishEntity(this.entityLogicalName);
+        } catch (err) {
+            logError(`ribbon editor ('${this.entityLogicalName}') publishEntity`, err);
+            vscode.window.showWarningMessage(
+                `D365: The ribbon change was imported but publishing failed (${errMsg(err)}), so it may not be visible yet. ` +
+                `You may need to publish '${entityLabel}' manually.`,
+            );
+            if (importedSolution) { await this.client.deleteSolution(importedSolution.solutionId).catch(() => undefined); }
+            return;
+        }
+
+        progress.report({ message: 'Cleaning up…' });
+        if (importedSolution) {
+            try {
+                await this.client.deleteSolution(importedSolution.solutionId);
+            } catch (err) {
+                logError(`ribbon editor ('${this.entityLogicalName}') deleteSolution`, err);
+                vscode.window.showWarningMessage(
+                    `D365: Ribbon changes were published, but the temporary solution '${solutionUniqueName}' could not be ` +
+                    `automatically removed. You may want to delete it manually.`,
+                );
+            }
+        } else {
+            vscode.window.showWarningMessage(
+                `D365: Ribbon changes were published, but the temporary solution '${solutionUniqueName}' could not be found ` +
+                `afterward to remove it. You may want to delete it manually.`,
+            );
+        }
+
+        vscode.window.showInformationMessage(
+            result.warningText
+                ? `D365: Ribbon changes published to '${entityLabel}', with a non-fatal warning from Dataverse: ${result.warningText}`
+                : `D365: Ribbon changes published to '${entityLabel}'.`,
+        );
+        await this.loadRibbon();
+    }
+
     private post(message: unknown): void {
         void this.panel.webview.postMessage(message);
     }
@@ -202,6 +340,48 @@ export class RibbonEditorPanel {
 
 function errMsg(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
+}
+
+// Solution.xml's <Publisher> only needs an existing publisher's unique name (see solutionPackage.ts),
+// so this just needs *a* real one -- skip the prompt when there's only one to choose from, mirroring
+// pickSolution's shape in webResourceManager.ts.
+async function pickPublisher(client: DataverseClient): Promise<Publisher | undefined> {
+    let publishers: Publisher[];
+    try {
+        publishers = await client.getPublishers();
+    } catch (err) {
+        vscode.window.showErrorMessage(`D365: Could not load publishers (${errMsg(err)}).`);
+        return undefined;
+    }
+
+    if (publishers.length === 0) {
+        vscode.window.showErrorMessage('D365: No publisher is available in this environment to own the temporary solution.');
+        return undefined;
+    }
+    if (publishers.length === 1) { return publishers[0]; }
+
+    const pick = await vscode.window.showQuickPick(
+        publishers.map(p => ({ label: p.friendlyName, description: p.uniqueName, publisher: p })),
+        { title: 'D365: Publisher for the temporary solution', placeHolder: 'Select a publisher…' },
+    );
+    return pick?.publisher;
+}
+
+// ImportSolution completes synchronously from the caller's perspective, but the ImportJob record's
+// own `data` column is the documented way to confirm success/failure -- poll briefly in case it
+// hasn't been written the instant the action call returns.
+async function waitForImportJob(client: DataverseClient, importJobId: string, timeoutMs = 60_000, intervalMs = 1_000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        const result = await client.getImportJobResult(importJobId);
+        if (result.completed) { return result; }
+        await delay(intervalMs);
+    }
+    return { completed: false, success: false, errorText: 'Timed out waiting for the import to complete.' };
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ── HTML shell ───────────────────────────────────────────────────────────────

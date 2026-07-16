@@ -80,7 +80,8 @@ export type InboundMessage =
 export type OutboundMessage =
   | { type: 'ready' }
   | { type: 'reloadFromServer' }
-  | { type: 'exportRibbonDiffXml'; model: RibbonModel };
+  | { type: 'exportRibbonDiffXml'; model: RibbonModel }
+  | { type: 'publishToDynamics'; model: RibbonModel };
 
 // ── RPC: request/response over the same transport (icon fetching) ───────────
 // Mirrors src/webview/protocol.ts's RpcRequestMap shape — see src/webview/rpc.ts for the transport.

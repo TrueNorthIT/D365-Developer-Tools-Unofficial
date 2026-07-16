@@ -57,10 +57,12 @@ export function buildRibbonDiffXml(model: RibbonModel): string {
             const controlsLocation = `${group.id}.Controls._children`;
             for (const control of group.controls) {
                 if (control.status === 'added') {
-                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, sequence++, serializeControl(control)));
+                    const seq = sequence++;
+                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq)));
                 } else if (control.status === 'modified') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
-                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, sequence++, serializeControl(control)));
+                    const seq = sequence++;
+                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq)));
                 } else if (control.status === 'deleted') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
                 }
@@ -121,8 +123,23 @@ function groupToObj(group: RibbonGroup): Record<string, unknown> {
     return obj;
 }
 
-function serializeControl(control: RibbonControl): string {
-    return builder.build({ [control.kind]: controlToObj(control) }) as string;
+// Sequence and TemplateAlias here are attributes on the *Button/SplitButton/FlyoutAnchor element
+// itself*, distinct from the CustomAction wrapper's own Sequence -- confirmed against a real
+// production RibbonDiffXml export, where every custom control placed directly in a group carries
+// both, matching its enclosing CustomAction's Sequence. TemplateAlias in particular isn't optional
+// in practice: a control added without it can import successfully yet never actually render on the
+// command bar, since it has no named slot in its group's template to render into -- a well-known
+// gotcha in manual/Ribbon-Workbench-style ribbon customization. "o2" is the standard alias used for
+// a normal icon+label control in the common default/Flexible group templates (both Microsoft's own
+// built-in groups like Save, and the default template Dataverse assigns to a newly created group).
+// Scoped to only this direct "control added/modified in an existing group" path -- not the shared
+// controlToObj used for nested Menu/FlyoutAnchor children -- since there's no evidence yet either
+// way for how those should behave, and guessing wrong there risks the opposite problem instead.
+function serializeControl(control: RibbonControl, sequence: number): string {
+    const obj = controlToObj(control);
+    obj['@_Sequence'] = String(sequence);
+    obj['@_TemplateAlias'] = 'o2';
+    return builder.build({ [control.kind]: obj }) as string;
 }
 
 function controlToObj(control: RibbonControl): Record<string, unknown> {
@@ -158,8 +175,11 @@ function controlsToObj(controls: RibbonControl[]): Record<string, unknown> | und
 
 function serializeCommandDefinition(cmd: RibbonCommandDefinition): string {
     const obj: Record<string, unknown> = { '@_Id': cmd.id };
-    if (cmd.enableRules.length) { obj.EnableRules = { EnableRule: cmd.enableRules.map(id => ({ '@_Id': id })) }; }
-    if (cmd.displayRules.length) { obj.DisplayRules = { DisplayRule: cmd.displayRules.map(id => ({ '@_Id': id })) }; }
+    // Always present (as an empty self-closing element when there are no rules), matching a real
+    // Dataverse-exported CommandDefinition -- unlike Templates/DisplayRules/EnableRules at the
+    // RibbonDiffXml root, which genuinely are optional wrapper sections.
+    obj.EnableRules = cmd.enableRules.length ? { EnableRule: cmd.enableRules.map(id => ({ '@_Id': id })) } : {};
+    obj.DisplayRules = cmd.displayRules.length ? { DisplayRule: cmd.displayRules.map(id => ({ '@_Id': id })) } : {};
     if (cmd.actions.length) {
         const actions: Record<string, unknown[]> = {};
         for (const action of cmd.actions) {
@@ -189,8 +209,13 @@ function serializeCommandDefinition(cmd: RibbonCommandDefinition): string {
 
 // ── CustomAction / HideCustomAction wrappers ─────────────────────────────────
 
+// A CustomAction's actual ribbon markup (Tab/Group/Button/etc.) must be wrapped in a
+// CommandUIDefinition element -- omitting it isn't just non-standard, Dataverse's import rejects it
+// outright ("Either the CommandUIDefinition element is missing, or the CommandUIDefinition element
+// is empty for CustomAction element with Id=..."), caught by an actual import against a live
+// environment.
 function customAction(id: string, location: string, sequence: number, innerXml: string): string {
-    return `<CustomAction Id="${escapeAttr(id)}" Location="${escapeAttr(location)}" Sequence="${sequence}">\n${indent(innerXml.trim(), 2)}\n</CustomAction>`;
+    return `<CustomAction Id="${escapeAttr(id)}" Location="${escapeAttr(location)}" Sequence="${sequence}">\n  <CommandUIDefinition>\n${indent(innerXml.trim(), 4)}\n  </CommandUIDefinition>\n</CustomAction>`;
 }
 
 function hideCustomAction(targetId: string, location: string): string {

@@ -59,6 +59,24 @@ describe('buildRibbonDiffXml', () => {
         assert.match(xml, /<Button Id="added_button"[^/]*LabelText="Added"/);
     });
 
+    it('wraps a CustomAction\'s ribbon markup in CommandUIDefinition -- Dataverse rejects import without it', () => {
+        const xml = buildRibbonDiffXml(baseModel());
+        assert.match(
+            xml,
+            /<CustomAction Id="added_button\.Custom"[^>]*>\s*<CommandUIDefinition>\s*<Button Id="added_button"[\s\S]*?<\/CommandUIDefinition>\s*<\/CustomAction>/,
+        );
+    });
+
+    it('gives a directly-added-to-group control a TemplateAlias and a Sequence matching its CustomAction, or Dataverse imports it but never renders it', () => {
+        const xml = buildRibbonDiffXml(baseModel());
+        const customActionMatch = /<CustomAction Id="added_button\.Custom"[^>]*Sequence="(\d+)"/.exec(xml);
+        assert.ok(customActionMatch, 'expected to find the CustomAction and its Sequence');
+        const buttonMatch = /<Button Id="added_button"[^/]*\/>/.exec(xml);
+        assert.ok(buttonMatch, 'expected to find the added_button element');
+        assert.match(buttonMatch![0], /TemplateAlias="o2"/);
+        assert.match(buttonMatch![0], new RegExp(`Sequence="${customActionMatch![1]}"`));
+    });
+
     it('emits a HideCustomAction plus a replacement CustomAction for a modified control', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<HideCustomAction Id="existing_button\.Hide" Location="grp\.currency\.Controls\._children" CommandUIElementId="existing_button" \/>/);
@@ -84,6 +102,12 @@ describe('buildRibbonDiffXml', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<CommandDefinition Id="cmd\.added">/);
         assert.doesNotMatch(xml, /Id="cmd\.unchanged"/);
+    });
+
+    it('always emits EnableRules/DisplayRules on a CommandDefinition, even empty, matching a real Dataverse export', () => {
+        // cmd.added has enableRules but no displayRules -- exercises both the non-empty and empty case.
+        const xml = buildRibbonDiffXml(baseModel());
+        assert.match(xml, /<CommandDefinition Id="cmd\.added">\s*<EnableRules>\s*<EnableRule Id="rule\.enable1"\s*\/>\s*<\/EnableRules>\s*<DisplayRules\s*\/>/);
     });
 
     it('serializes each JavaScriptFunction parameter under its own type tag, not always CrmParameter', () => {
