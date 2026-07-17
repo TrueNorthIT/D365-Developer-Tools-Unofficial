@@ -6,7 +6,8 @@ import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { EntityCache } from './entityCache';
 import { D365StatusBar, showD365Menu } from './statusBar';
-import { McpBridge } from './mcpBridge';
+import { McpBridge, isMcpConfigured } from './mcpBridge';
+import { McpStatusBar } from './mcpStatusBar';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
 import {
     publishWebResources,
@@ -44,6 +45,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(bridge);
+
+    const mcpStatusBar = new McpStatusBar(bridge);
+    context.subscriptions.push(mcpStatusBar);
 
     // Silently restore the last connection for this workspace
     void connectionManager.tryRestoreConnection();
@@ -210,6 +214,11 @@ async function configureMcpCommand(extensionPath: string): Promise<void> {
         return;
     }
 
+    if (isMcpConfigured(workspaceRoot)) {
+        vscode.window.showInformationMessage('D365: MCP server is already configured for this workspace.');
+        return;
+    }
+
     const mcpJsonPath = path.join(workspaceRoot, '.mcp.json');
 
     let existing: Record<string, unknown> = {};
@@ -218,12 +227,6 @@ async function configureMcpCommand(extensionPath: string): Promise<void> {
             existing = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf8')) as Record<string, unknown>;
         } catch {
             vscode.window.showErrorMessage('D365: .mcp.json exists but is not valid JSON. Fix or remove it, then retry.');
-            return;
-        }
-
-        const servers = existing['mcpServers'] as Record<string, unknown> | undefined;
-        if (servers?.['d365']) {
-            vscode.window.showInformationMessage('D365: MCP server is already configured for this workspace.');
             return;
         }
     }
