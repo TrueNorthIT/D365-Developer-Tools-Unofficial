@@ -63,7 +63,20 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         switch (msg.type) {
             case 'ready':
                 this.post({ type: 'connectionState', connected: this.connectionManager.isConnected, restoring: this.connectionManager.isRestoring });
-                if (this.connectionManager.isConnected) { await this.sendEntities(); }
+                if (this.connectionManager.isConnected) {
+                    // Fire-and-forget both, same as the constructor's onDidChangeConnection handler --
+                    // awaiting sendEntities() here would delay the filter until its OWN background
+                    // refresh finishes (sendEntities doesn't resolve until then, even though it already
+                    // posted the cached list synchronously), which is exactly the "shows unfiltered,
+                    // then corrects a second later" lag this is meant to fix.
+                    void this.sendEntities();
+                    // post() silently no-ops while no view is attached, so a solution filter applied
+                    // by the constructor's onDidChangeConnection handler (which can fire before the
+                    // webview finishes resolving) may never have reached this view. 'ready' only fires
+                    // once the webview is actually listening, so re-apply it here to be sure.
+                    const defaultSolution = this.connectionManager.getDefaultSolution();
+                    if (defaultSolution) { void this.applySolutionFilter(defaultSolution); }
+                }
                 break;
             case 'connect':
                 await this.connectionManager.connect();
@@ -287,6 +300,24 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
     // showProgress is suppressed for the auto-apply-on-connect path so restoring a connection doesn't
     // pop a notification toast on every reload -- only an explicit "Filter by Solution" pick shows one.
     private async applySolutionFilter(solution: DefaultSolutionRef, showProgress = false): Promise<void> {
+        const environmentUrl = this.connectionManager.connection?.environmentUrl;
+        const cached = environmentUrl ? this.entityCache.getSolutionEntityIds(environmentUrl, solution.solutionId) : undefined;
+
+        if (cached) {
+            // Cache-first, same idea as sendEntities: apply immediately (this is what used to lag
+            // behind the already-cached entity list on every reload) and silently refresh in the
+            // background -- no loading UI, since re-posting solutionFilter is harmless either way.
+            this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: cached });
+            try {
+                const fresh = [...await this.client.getSolutionEntityIds(solution.solutionId)];
+                await this.entityCache.setSolutionEntityIds(environmentUrl!, solution.solutionId, fresh);
+                this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: fresh });
+            } catch {
+                // Stale cache is still applied -- don't surface an error over a silent refresh.
+            }
+            return;
+        }
+
         const load = () => this.client.getSolutionEntityIds(solution.solutionId);
 
         let entityIds;
@@ -302,7 +333,9 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
             return;
         }
 
-        this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: [...entityIds] });
+        const ids = [...entityIds];
+        if (environmentUrl) { await this.entityCache.setSolutionEntityIds(environmentUrl, solution.solutionId, ids); }
+        this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: ids });
     }
 
     private post(message: unknown): void {

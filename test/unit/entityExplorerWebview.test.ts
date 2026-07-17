@@ -60,10 +60,21 @@ function makeConnectionManager(overrides: Partial<{ isConnected: boolean; isRest
     return { cm, emitter, state, connect, getDefaultSolution, setDefaultSolution };
 }
 
-function makeEntityCache(initial?: EntityDefinition[]): { entityCache: EntityCache; get: sinon.SinonStub; set: sinon.SinonStub } {
+function makeEntityCache(initial?: EntityDefinition[]): {
+    entityCache: EntityCache;
+    get: sinon.SinonStub;
+    set: sinon.SinonStub;
+    getSolutionEntityIds: sinon.SinonStub;
+    setSolutionEntityIds: sinon.SinonStub;
+} {
     const get = sinon.stub().returns(initial);
     const set = sinon.stub().resolves();
-    return { entityCache: { get, set } as unknown as EntityCache, get, set };
+    const getSolutionEntityIds = sinon.stub().returns(undefined);
+    const setSolutionEntityIds = sinon.stub().resolves();
+    return {
+        entityCache: { get, set, getSolutionEntityIds, setSolutionEntityIds } as unknown as EntityCache,
+        get, set, getSolutionEntityIds, setSolutionEntityIds,
+    };
 }
 
 interface FakeClient {
@@ -219,7 +230,10 @@ describe('EntityExplorerWebviewProvider', () => {
             const { getHandler, postMessage, getEntities } = setup({ isConnected: true, isRestoring: false });
             getEntities.resolves([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }]);
 
+            // sendEntities is fire-and-forget from the 'ready' handler (so it can't delay the solution
+            // filter below it), so its own posts land asynchronously after the handler call resolves.
             await getHandler()({ type: 'ready' });
+            await flush();
 
             const loadingIdx = postMessage.getCalls().findIndex(c => (c.args[0] as any).type === 'entitiesLoading');
             const entitiesIdx = postMessage.getCalls().findIndex(c => (c.args[0] as any).type === 'entities');
@@ -233,8 +247,61 @@ describe('EntityExplorerWebviewProvider', () => {
             getEntities.rejects(new Error('boom'));
 
             await getHandler()({ type: 'ready' });
+            await flush();
 
             assert.ok(postMessage.calledWith({ type: 'entitiesError', message: 'boom' }));
+        });
+
+        it("'ready' also (re)applies the default solution filter, recovering a post dropped before this view attached", async () => {
+            const { getHandler, postMessage, getEntities, getSolutionEntityIds, getDefaultSolution } = setup({ isConnected: true });
+            getEntities.resolves([]);
+            getDefaultSolution.returns({ solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' });
+            getSolutionEntityIds.resolves(new Set(['e1']));
+
+            await getHandler()({ type: 'ready' });
+            await flush();
+
+            assert.ok(getSolutionEntityIds.calledWith('s1'));
+            assert.ok(postMessage.calledWith({ type: 'solutionFilter', name: 'Solution One', entityIds: ['e1'] }));
+        });
+
+        it("'ready' applies the solution filter without waiting for sendEntities' own background refresh to finish", async () => {
+            // Regression test: sendEntities() doesn't resolve until its background refresh completes
+            // even on a cache hit (it posts the cached list synchronously first), so the 'ready' handler
+            // must not await it before applying the solution filter -- otherwise the filter is delayed
+            // by however long that entity refresh takes, which is exactly the bug this guards against.
+            const { cm, getDefaultSolution } = makeConnectionManager({ isConnected: true });
+            const { client, getEntities, getSolutionEntityIds } = makeClient();
+            const defaultSolution: DefaultSolutionRef = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+            getDefaultSolution.returns(defaultSolution);
+            getSolutionEntityIds.resolves(new Set(['e1']));
+
+            let resolveEntities!: (v: EntityDefinition[]) => void;
+            getEntities.returns(new Promise<EntityDefinition[]>(resolve => { resolveEntities = resolve; }));
+
+            const { entityCache } = makeEntityCache([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }]);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage, getHandler } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            await getHandler()({ type: 'ready' });
+            await flush();
+
+            // getEntities' promise is still unresolved (sendEntities' background refresh is stuck),
+            // but the solution filter must already have been applied regardless.
+            assert.ok(postMessage.calledWith({ type: 'solutionFilter', name: 'Solution One', entityIds: ['e1'] }));
+
+            resolveEntities([]);
+            await flush();
+        });
+
+        it("'ready' does not touch the solution filter when no default solution is set", async () => {
+            const { getHandler, getEntities, getSolutionEntityIds } = setup({ isConnected: true });
+            getEntities.resolves([]);
+
+            await getHandler()({ type: 'ready' });
+
+            assert.strictEqual(getSolutionEntityIds.callCount, 0);
         });
 
         it("'connect' delegates to connectionManager.connect()", async () => {
@@ -581,7 +648,7 @@ describe('EntityExplorerWebviewProvider', () => {
     // ── default solution (auto-apply on connect, persisted from the picker, clear round-trip) ──
 
     describe('default solution', () => {
-        it('auto-applies the persisted default solution as a filter once connected', async () => {
+        it('auto-applies the persisted default solution as a filter once connected (no cache yet)', async () => {
             // The auto-apply logic lives in the constructor's onDidChangeConnection subscription, so
             // it must be exercised via emitter.fire(...) -- not the 'ready' message handler, which only
             // (re)loads entities.
@@ -591,7 +658,8 @@ describe('EntityExplorerWebviewProvider', () => {
             const { client, getEntities, getSolutionEntityIds } = makeClient();
             getEntities.resolves([]);
             getSolutionEntityIds.resolves(new Set(['e1']));
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const { entityCache, setSolutionEntityIds } = makeEntityCache();
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -600,6 +668,52 @@ describe('EntityExplorerWebviewProvider', () => {
 
             assert.ok(getSolutionEntityIds.calledWith('s1'));
             assert.ok(postMessage.calledWith({ type: 'solutionFilter', name: 'Solution One', entityIds: ['e1'] }));
+            assert.ok(setSolutionEntityIds.calledWith('https://contoso.crm.dynamics.com', 's1', ['e1']), 'populates the cache for next time');
+        });
+
+        it('applies a cached solution filter immediately, then silently refreshes it in the background', async () => {
+            const { cm, emitter, getDefaultSolution } = makeConnectionManager();
+            const defaultSolution: DefaultSolutionRef = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+            getDefaultSolution.returns(defaultSolution);
+            const { client, getEntities, getSolutionEntityIds } = makeClient();
+            getEntities.resolves([]);
+            getSolutionEntityIds.resolves(new Set(['fresh-1']));
+            const { entityCache, getSolutionEntityIds: getCachedIds, setSolutionEntityIds } = makeEntityCache();
+            getCachedIds.returns(['cached-1']);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            emitter.fire(fakeConnection());
+            await flush();
+
+            const filterCalls = postMessage.getCalls().filter(c => (c.args[0] as any).type === 'solutionFilter');
+            assert.strictEqual(filterCalls.length, 2, 'cached filter applied immediately, then replaced once the refresh completes');
+            assert.deepStrictEqual(filterCalls[0].args[0], { type: 'solutionFilter', name: 'Solution One', entityIds: ['cached-1'] });
+            assert.deepStrictEqual(filterCalls[1].args[0], { type: 'solutionFilter', name: 'Solution One', entityIds: ['fresh-1'] });
+            assert.ok(setSolutionEntityIds.calledWith('https://contoso.crm.dynamics.com', 's1', ['fresh-1']));
+        });
+
+        it('keeps the cached solution filter applied if the background refresh fails', async () => {
+            const { cm, emitter, getDefaultSolution } = makeConnectionManager();
+            const defaultSolution: DefaultSolutionRef = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+            getDefaultSolution.returns(defaultSolution);
+            const { client, getEntities, getSolutionEntityIds } = makeClient();
+            getEntities.resolves([]);
+            getSolutionEntityIds.rejects(new Error('offline'));
+            const { entityCache, getSolutionEntityIds: getCachedIds, setSolutionEntityIds } = makeEntityCache();
+            getCachedIds.returns(['cached-1']);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            emitter.fire(fakeConnection());
+            await flush();
+
+            const filterCalls = postMessage.getCalls().filter(c => (c.args[0] as any).type === 'solutionFilter');
+            assert.strictEqual(filterCalls.length, 1, 'no second post when the background refresh fails');
+            assert.deepStrictEqual(filterCalls[0].args[0], { type: 'solutionFilter', name: 'Solution One', entityIds: ['cached-1'] });
+            assert.ok(!setSolutionEntityIds.called);
         });
 
         it('does not apply any filter when no default solution is set', async () => {

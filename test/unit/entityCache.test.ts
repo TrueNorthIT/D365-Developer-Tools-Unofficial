@@ -49,4 +49,37 @@ describe('EntityCache', () => {
         assert.strictEqual(cache.get('https://a.crm.dynamics.com')?.[0].logicalName, 'account');
         assert.strictEqual(cache.get('https://b.crm.dynamics.com')?.[0].logicalName, 'contact');
     });
+
+    describe('solution entity ids', () => {
+        it('returns undefined for a solution that has never been cached', () => {
+            const cache = new EntityCache(makeContext());
+            assert.strictEqual(cache.getSolutionEntityIds('https://contoso.crm.dynamics.com', 's1'), undefined);
+        });
+
+        it('stores and retrieves entity ids for a given environment + solution', async () => {
+            const cache = new EntityCache(makeContext());
+            await cache.setSolutionEntityIds('https://contoso.crm.dynamics.com', 's1', ['e1', 'e2']);
+
+            assert.deepStrictEqual(cache.getSolutionEntityIds('https://contoso.crm.dynamics.com', 's1'), ['e1', 'e2']);
+        });
+
+        it('overwrites a previous cache entry for the same environment + solution', async () => {
+            const cache = new EntityCache(makeContext());
+            await cache.setSolutionEntityIds('https://contoso.crm.dynamics.com', 's1', ['e1']);
+            await cache.setSolutionEntityIds('https://contoso.crm.dynamics.com', 's1', ['e2', 'e3']);
+
+            assert.deepStrictEqual(cache.getSolutionEntityIds('https://contoso.crm.dynamics.com', 's1'), ['e2', 'e3']);
+        });
+
+        it('keeps caches independent across environments and across solutions within the same environment', async () => {
+            const cache = new EntityCache(makeContext());
+            await cache.setSolutionEntityIds('https://a.crm.dynamics.com', 's1', ['a-s1']);
+            await cache.setSolutionEntityIds('https://a.crm.dynamics.com', 's2', ['a-s2']);
+            await cache.setSolutionEntityIds('https://b.crm.dynamics.com', 's1', ['b-s1']);
+
+            assert.deepStrictEqual(cache.getSolutionEntityIds('https://a.crm.dynamics.com', 's1'), ['a-s1']);
+            assert.deepStrictEqual(cache.getSolutionEntityIds('https://a.crm.dynamics.com', 's2'), ['a-s2']);
+            assert.deepStrictEqual(cache.getSolutionEntityIds('https://b.crm.dynamics.com', 's1'), ['b-s1']);
+        });
+    });
 });
