@@ -1,5 +1,8 @@
 import * as assert from 'assert';
-import { displayText, locationOf, reducer, type EditorState } from '../../src/webview-ribbon/ribbonState';
+import {
+  buildRibbonElementId, collectAllIds, displayText, firstUnusedName, kindSuffixFor, locationOf, reducer, slugify,
+  type EditorState, type PromptRequest,
+} from '../../src/webview-ribbon/ribbonState';
 import type { RibbonModel } from '../../src/webview-ribbon/protocol';
 
 function baseModel(): RibbonModel {
@@ -37,6 +40,7 @@ function stateWithModel(model: RibbonModel): EditorState {
     return {
         entityLogicalName: 'contact',
         entityDisplayName: 'Contact',
+        publisherPrefix: 'new',
         model,
         loading: false,
         error: null,
@@ -81,16 +85,153 @@ describe('displayText', () => {
     });
 });
 
-describe('ribbonState reducer: createCommandForControl', () => {
-    it('creates a new command definition and assigns it to the control', () => {
+describe("ribbonState reducer: 'ribbonModel' inbound message", () => {
+    it('stores publisherPrefix from the message alongside the model', () => {
+        const model = baseModel();
+        const next = reducer(
+            { entityLogicalName: '', entityDisplayName: '', ribbonLocationLabel: '', publisherPrefix: '', model: null, loading: true, error: null, selection: null },
+            { type: 'ribbonModel', entityLogicalName: 'contact', entityDisplayName: 'Contact', ribbonLocationLabel: 'All', publisherPrefix: 'new', model },
+        );
+        assert.strictEqual(next.publisherPrefix, 'new');
+        assert.strictEqual(next.loading, false);
+    });
+});
+
+describe('slugify', () => {
+    it('lowercases and strips spaces/punctuation', () => {
+        assert.strictEqual(slugify('My Action!'), 'myaction');
+    });
+    it('keeps underscores and digits', () => {
+        assert.strictEqual(slugify('My_Action_2'), 'my_action_2');
+    });
+    it('trims surrounding whitespace before slugifying', () => {
+        assert.strictEqual(slugify('  Spaced  '), 'spaced');
+    });
+});
+
+describe('buildRibbonElementId', () => {
+    it('joins prefix, entity, slugified name, and kind suffix with dots', () => {
+        assert.strictEqual(buildRibbonElementId('new', 'account', 'My Action', 'button'), 'new.account.myaction.button');
+    });
+});
+
+describe('kindSuffixFor', () => {
+    const cases: Array<[PromptRequest, string]> = [
+        [{ kind: 'tab' }, 'tab'],
+        [{ kind: 'group', tabId: 't1' }, 'group'],
+        [{ kind: 'control', tabId: 't1', groupId: 'g1', controlKind: 'Button' }, 'button'],
+        [{ kind: 'control', tabId: 't1', groupId: 'g1', controlKind: 'SplitButton' }, 'splitbutton'],
+        [{ kind: 'control', tabId: 't1', groupId: 'g1', controlKind: 'FlyoutAnchor' }, 'flyoutanchor'],
+        [{ kind: 'command', controlId: 'c1' }, 'command'],
+        [{ kind: 'rule', commandId: 'cmd1', ruleType: 'enable' }, 'enablerule'],
+        [{ kind: 'rule', commandId: 'cmd1', ruleType: 'display' }, 'displayrule'],
+    ];
+    for (const [request, expected] of cases) {
+        it(`maps ${request.kind}${'controlKind' in request ? `/${request.controlKind}` : ''}${'ruleType' in request ? `/${request.ruleType}` : ''} to "${expected}"`, () => {
+            assert.strictEqual(kindSuffixFor(request), expected);
+        });
+    }
+});
+
+describe('firstUnusedName', () => {
+    it('returns the base name unchanged when it is not taken', () => {
+        assert.strictEqual(firstUnusedName('myaction', () => false), 'myaction');
+    });
+
+    it('appends 2, 3, ... until it finds one that is not taken', () => {
+        const taken = new Set(['myaction', 'myaction2', 'myaction3']);
+        assert.strictEqual(firstUnusedName('myaction', c => taken.has(c)), 'myaction4');
+    });
+
+    it('returns an empty base unchanged (nothing to de-duplicate)', () => {
+        assert.strictEqual(firstUnusedName('', () => true), '');
+    });
+});
+
+describe('collectAllIds', () => {
+    it('collects tab, group, control (incl. nested), command, and rule ids', () => {
+        const model = baseModel();
+        const ids = collectAllIds(model);
+        assert.ok(ids.has('Mscrm.HomepageGrid.contact.MainTab'));
+        assert.ok(ids.has('grp1'));
+        assert.ok(ids.has('btn.no.command'));
+        assert.ok(ids.has('btn.with.command'));
+        assert.ok(ids.has('cmd1'));
+        assert.ok(ids.has('rule.enable1'));
+    });
+
+    it('collects nested (flyout menu) control ids too', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({
+            kind: 'FlyoutAnchor', id: 'flyout1', label: 'Flyout', toolTipTitle: '', toolTipDescription: '', status: 'unchanged',
+            controls: [{ kind: 'MenuSection', id: 'section1', label: '', toolTipTitle: '', toolTipDescription: '', status: 'unchanged', controls: [
+                { kind: 'Button', id: 'nested.btn', label: 'Nested', toolTipTitle: '', toolTipDescription: '', status: 'unchanged' },
+            ] }],
+        });
+        const ids = collectAllIds(model);
+        assert.ok(ids.has('flyout1'));
+        assert.ok(ids.has('section1'));
+        assert.ok(ids.has('nested.btn'));
+    });
+});
+
+describe('ribbonState reducer: addTab/addGroup/addControl (ids supplied by the caller, see NamePromptDialog)', () => {
+    it('addTab adds a tab with the given id/title and selects it', () => {
         const state = stateWithModel(baseModel());
-        const next = reducer(state, { type: 'local/createCommandForControl', controlId: 'btn.no.command' });
+        const next = reducer(state, { type: 'local/addTab', id: 'new.contact.mytab.tab', title: 'My Tab' });
+
+        const tab = next.model!.tabs.find(t => t.id === 'new.contact.mytab.tab')!;
+        assert.ok(tab, 'expected the new tab to exist');
+        assert.strictEqual(tab.title, 'My Tab');
+        assert.strictEqual(tab.status, 'added');
+        assert.deepStrictEqual(next.selection, { kind: 'tab', id: 'new.contact.mytab.tab' });
+    });
+
+    it('addGroup adds a group to the given tab with the given id/title and selects it', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/addGroup', tabId: 'Mscrm.HomepageGrid.contact.MainTab', id: 'new.contact.mygroup.group', title: 'My Group' });
+
+        const group = next.model!.tabs[0].groups.find(g => g.id === 'new.contact.mygroup.group')!;
+        assert.ok(group, 'expected the new group to exist');
+        assert.strictEqual(group.title, 'My Group');
+        assert.strictEqual(group.status, 'added');
+        assert.deepStrictEqual(next.selection, { kind: 'group', tabId: 'Mscrm.HomepageGrid.contact.MainTab', id: 'new.contact.mygroup.group' });
+    });
+
+    it('addControl adds a control with the given id/title to the given group and selects it', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/addControl', tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', kind: 'Button', id: 'new.contact.mybutton.button', title: 'My Button' });
+
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'new.contact.mybutton.button')!;
+        assert.ok(control, 'expected the new control to exist');
+        assert.strictEqual(control.label, 'My Button');
+        assert.strictEqual(control.status, 'added');
+        assert.deepStrictEqual(next.selection, { kind: 'control', tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', id: 'new.contact.mybutton.button' });
+    });
+
+    it('addControl gives a FlyoutAnchor a child MenuSection using the supplied menuSectionId', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, {
+            type: 'local/addControl', tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', kind: 'FlyoutAnchor',
+            id: 'new.contact.myflyout.flyoutanchor', title: 'My Flyout', menuSectionId: 'new.contact.myflyout.menusection',
+        });
+
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'new.contact.myflyout.flyoutanchor')!;
+        assert.strictEqual(control.controls?.[0].id, 'new.contact.myflyout.menusection');
+        assert.strictEqual(control.controls?.[0].kind, 'MenuSection');
+    });
+});
+
+describe('ribbonState reducer: createCommandForControl', () => {
+    it('creates a command definition with the given id and assigns it to the control', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/createCommandForControl', controlId: 'btn.no.command', id: 'new.contact.mycommand.command' });
 
         const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
-        assert.ok(control.commandId, 'expected a commandId to be assigned');
+        assert.strictEqual(control.commandId, 'new.contact.mycommand.command');
         assert.strictEqual(control.status, 'modified');
 
-        const command = next.model!.commandDefinitions.find(c => c.id === control.commandId)!;
+        const command = next.model!.commandDefinitions.find(c => c.id === 'new.contact.mycommand.command')!;
         assert.ok(command, 'expected the new command definition to exist');
         assert.strictEqual(command.status, 'added');
         assert.deepStrictEqual(command.enableRules, []);
@@ -98,30 +239,30 @@ describe('ribbonState reducer: createCommandForControl', () => {
 
     it('does nothing when the control id is not found', () => {
         const state = stateWithModel(baseModel());
-        const next = reducer(state, { type: 'local/createCommandForControl', controlId: 'does.not.exist' });
+        const next = reducer(state, { type: 'local/createCommandForControl', controlId: 'does.not.exist', id: 'new.contact.mycommand.command' });
         assert.strictEqual(next.model!.commandDefinitions.length, 1);
     });
 });
 
 describe('ribbonState reducer: addRuleToCommand', () => {
-    it('creates a new rule and appends its id to the command enable rules', () => {
+    it('creates a rule with the given id and appends it to the command enable rules', () => {
         const state = stateWithModel(baseModel());
-        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'cmd1', ruleType: 'enable' });
+        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'cmd1', ruleType: 'enable', id: 'new.contact.myrule.enablerule' });
 
         const command = next.model!.commandDefinitions.find(c => c.id === 'cmd1')!;
         assert.strictEqual(command.enableRules.length, 2);
         assert.strictEqual(command.status, 'modified');
+        assert.strictEqual(command.enableRules[1], 'new.contact.myrule.enablerule');
 
-        const newRuleId = command.enableRules[1];
-        const rule = next.model!.enableRules.find(r => r.id === newRuleId)!;
+        const rule = next.model!.enableRules.find(r => r.id === 'new.contact.myrule.enablerule')!;
         assert.ok(rule, 'expected the new enable rule to exist in the model');
         assert.strictEqual(rule.status, 'added');
         assert.ok(rule.xml.includes('EnableRule'));
     });
 
-    it('creates a new rule and appends its id to the command display rules', () => {
+    it('creates a rule with the given id and appends it to the command display rules', () => {
         const state = stateWithModel(baseModel());
-        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'cmd1', ruleType: 'display' });
+        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'cmd1', ruleType: 'display', id: 'new.contact.myrule.displayrule' });
 
         const command = next.model!.commandDefinitions.find(c => c.id === 'cmd1')!;
         assert.strictEqual(command.displayRules.length, 1);
@@ -132,7 +273,7 @@ describe('ribbonState reducer: addRuleToCommand', () => {
 
     it('does nothing when the command id is not found', () => {
         const state = stateWithModel(baseModel());
-        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'does.not.exist', ruleType: 'enable' });
+        const next = reducer(state, { type: 'local/addRuleToCommand', commandId: 'does.not.exist', ruleType: 'enable', id: 'new.contact.myrule.enablerule' });
         assert.strictEqual(next.model!.enableRules.length, 1);
     });
 });

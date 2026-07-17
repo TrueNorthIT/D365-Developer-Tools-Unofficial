@@ -65,6 +65,8 @@ export class RibbonEditorPanel {
 
         log(`Ribbon editor: opening new panel for '${key}'`);
 
+        const publisherPrefix = await RibbonEditorPanel.resolvePublisherPrefix();
+
         const locationLabel = RIBBON_LOCATION_LABELS[ribbonLocation];
         const panel = vscode.window.createWebviewPanel(
             'd365.ribbonEditor',
@@ -80,11 +82,39 @@ export class RibbonEditorPanel {
             },
         );
 
-        const editor = new RibbonEditorPanel(panel, extensionUri, client, entityLogicalName, entityDisplayName, ribbonLocation);
+        const editor = new RibbonEditorPanel(panel, extensionUri, client, entityLogicalName, entityDisplayName, ribbonLocation, publisherPrefix);
         RibbonEditorPanel.panels.set(key, editor);
         panel.onDidDispose(() => RibbonEditorPanel.panels.delete(key));
 
         await editor.loadRibbon();
+    }
+
+    // Ids for anything created in the ribbon editor are built as {prefix}.{entity}.{name}.{kind} (see
+    // buildRibbonElementId in the webview, ribbonState.ts) -- a real Dataverse customization prefix,
+    // same as any other unmanaged customization would use, rather than this tool's own throwaway
+    // "new_"-style ids. Prompted once per workspace and saved to workspace settings; every later
+    // panel (any entity, this session or a future one) just reads the saved value silently.
+    private static async resolvePublisherPrefix(): Promise<string> {
+        const config = vscode.workspace.getConfiguration('d365.ribbonEditor');
+        const saved = config.get<string>('publisherPrefix');
+        if (saved) { return saved; }
+
+        const entered = await vscode.window.showInputBox({
+            title: 'D365: Publisher Prefix for Ribbon Customizations',
+            prompt: 'Used to build ids for anything you add in the ribbon editor, e.g. "new" → new.account.myaction.button. Saved for this workspace.',
+            placeHolder: 'e.g. new, tn, contoso',
+            validateInput: value => {
+                const trimmed = value.trim();
+                if (!trimmed) { return 'A publisher prefix is required to add new ribbon elements.'; }
+                if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(trimmed)) { return 'Use letters and numbers only, starting with a letter.'; }
+                return undefined;
+            },
+        });
+        if (!entered) { return ''; }
+
+        const prefix = entered.trim();
+        await config.update('publisherPrefix', prefix, vscode.ConfigurationTarget.Workspace);
+        return prefix;
     }
 
     private constructor(
@@ -94,6 +124,7 @@ export class RibbonEditorPanel {
         private readonly entityLogicalName: string,
         private readonly entityDisplayName: string,
         private readonly ribbonLocation: RibbonLocationFilter,
+        private readonly publisherPrefix: string,
     ) {
         this.panel = panel;
         panel.webview.html = buildHtml(panel.webview, extensionUri);
@@ -205,6 +236,7 @@ export class RibbonEditorPanel {
             entityLogicalName: this.entityLogicalName,
             entityDisplayName: this.entityDisplayName,
             ribbonLocationLabel: RIBBON_LOCATION_LABELS[this.ribbonLocation],
+            publisherPrefix: this.publisherPrefix,
             model: this.model,
         });
     }

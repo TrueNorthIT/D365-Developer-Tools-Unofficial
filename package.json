@@ -145,6 +145,12 @@
           "default": "",
           "scope": "resource",
           "description": "Prefix prepended to a file's relative path to form its Dataverse web resource name, e.g. 'new_' for a name like new_/scripts/main.js. A trailing '/' is added automatically if missing. Leave blank for no prefix."
+        },
+        "d365.ribbonEditor.publisherPrefix": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Publisher prefix used to build ids for anything created in the ribbon editor, e.g. 'new' for an id like new.account.myaction.button. Prompted for once and saved here; leave blank to be prompted again next time the ribbon editor is opened."
         }
       }
     },

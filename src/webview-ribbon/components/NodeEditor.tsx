@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react';
 import type { RibbonAction, RibbonActionParameter, RibbonControl, RibbonModel, RibbonNodeStatus, RibbonRuleRaw } from '../protocol';
-import { displayText, findControl, findGroup, findTab, type Action, type Selection } from '../ribbonState';
+import { displayText, findControl, findGroup, findTab, type Action, type PromptRequest, type Selection } from '../ribbonState';
 import { parseRuleCondition, ruleConditionLabel } from '../ruleCondition';
 import { ParametersDialog } from './ParametersDialog';
 import { RuleDialog } from './RuleDialog';
@@ -10,9 +10,10 @@ interface Props {
   model: RibbonModel;
   selection: Selection;
   dispatch: Dispatch<Action>;
+  onRequestPrompt: (request: PromptRequest) => void;
 }
 
-export function NodeEditor({ model, selection, dispatch }: Props) {
+export function NodeEditor({ model, selection, dispatch, onRequestPrompt }: Props) {
   if (!selection) {
     return <div className="node-editor empty">Select a tab, group, or button to edit it.</div>;
   }
@@ -67,7 +68,7 @@ export function NodeEditor({ model, selection, dispatch }: Props) {
       />
       <label>Command Id<input type="text" value={control.commandId ?? ''} onChange={e => dispatch({ type: 'local/updateControl', id: control.id, patch: { commandId: e.target.value } })} /></label>
 
-      <CommandSection model={model} control={control} dispatch={dispatch} />
+      <CommandSection model={model} control={control} dispatch={dispatch} onRequestPrompt={onRequestPrompt} />
     </div>
   );
 }
@@ -113,7 +114,7 @@ function LabelLikeField({ label, rawValue, id, onChange, multiline }: {
 
 // Only the command (and its enable/display rules) that THIS button actually references — not the
 // full model-wide lists, which run into the hundreds on a real ribbon and were unusable to browse.
-function CommandSection({ model, control, dispatch }: { model: RibbonModel; control: RibbonControl; dispatch: Dispatch<Action> }) {
+function CommandSection({ model, control, dispatch, onRequestPrompt }: { model: RibbonModel; control: RibbonControl; dispatch: Dispatch<Action>; onRequestPrompt: (request: PromptRequest) => void }) {
   const [editingParams, setEditingParams] = useState(false);
   const command = control.commandId ? model.commandDefinitions.find(c => c.id === control.commandId) : undefined;
 
@@ -124,7 +125,7 @@ function CommandSection({ model, control, dispatch }: { model: RibbonModel; cont
         {control.commandId
           ? <p className="hint">Command Id '{control.commandId}' was not found in this ribbon.</p>
           : <p className="hint">This control has no command yet.</p>}
-        <button type="button" onClick={() => dispatch({ type: 'local/createCommandForControl', controlId: control.id })}>
+        <button type="button" onClick={() => onRequestPrompt({ kind: 'command', controlId: control.id })}>
           Create Command
         </button>
       </div>
@@ -175,8 +176,8 @@ function CommandSection({ model, control, dispatch }: { model: RibbonModel; cont
         />
       )}
 
-      <RuleGroup title="Enable Rules" rules={enableRules} referencedCount={command.enableRules.length} ruleType="enable" commandId={command.id} dispatch={dispatch} />
-      <RuleGroup title="Display Rules" rules={displayRules} referencedCount={command.displayRules.length} ruleType="display" commandId={command.id} dispatch={dispatch} />
+      <RuleGroup title="Enable Rules" rules={enableRules} referencedCount={command.enableRules.length} ruleType="enable" commandId={command.id} dispatch={dispatch} onRequestPrompt={onRequestPrompt} />
+      <RuleGroup title="Display Rules" rules={displayRules} referencedCount={command.displayRules.length} ruleType="display" commandId={command.id} dispatch={dispatch} onRequestPrompt={onRequestPrompt} />
     </div>
   );
 }
@@ -190,13 +191,14 @@ function jsAction(current: RibbonAction | undefined, patch: Partial<{ library: s
 // reference several rules, and a raw XML fragment per rule doesn't need to be on screen until
 // you're actually editing it. Clicking a tile (including a freshly-created one, opened
 // automatically -- see the "just created" effect below) opens RuleDialog to view/edit/remove it.
-function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatch }: {
+function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatch, onRequestPrompt }: {
   title: string;
   rules: RibbonRuleRaw[];
   referencedCount: number;
   ruleType: 'enable' | 'display';
   commandId: string;
   dispatch: Dispatch<Action>;
+  onRequestPrompt: (request: PromptRequest) => void;
 }) {
   const [openRuleId, setOpenRuleId] = useState<string | undefined>(undefined);
   // This component instance stays mounted as the selected button/command changes (it's always
@@ -219,7 +221,7 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
     <div className="rule-group">
       <div className="rule-group-header">
         <span>{title} ({rules.length})</span>
-        <button type="button" onClick={() => dispatch({ type: 'local/addRuleToCommand', commandId, ruleType })}>+ New</button>
+        <button type="button" onClick={() => onRequestPrompt({ kind: 'rule', commandId, ruleType })}>+ New</button>
       </div>
       {referencedCount > rules.length && <p className="hint">Some referenced rule ids weren't found in this ribbon.</p>}
       <div className="rule-tiles">

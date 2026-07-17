@@ -542,6 +542,7 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 }
 .link-button:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-foreground)); }
 .dialog .hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin: -6px 0 10px; }
+.dialog .hint.dialog-error { color: var(--vscode-errorForeground); }
 .dialog label.checkbox-label {
   flex-direction: row;
   align-items: center;

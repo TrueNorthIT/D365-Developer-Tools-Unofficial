@@ -168,10 +168,13 @@ Each entity/location combination opens in its own editor tab, since they're mate
 
 - Browse the effective ribbon (tabs → groups → buttons/split-buttons/flyouts) rendered to look like the real thing, icons included
 - Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules
-- Add new tabs, groups, and controls, or mark existing ones for deletion — a control that's a prior customization has its underlying `CustomAction` removed outright on publish, not just hidden
+- Add new tabs, groups, and controls from the toolbar or by right-clicking a tab strip/group
+- Mark existing tabs/groups/controls for deletion, or restore them — a control that's a prior customization has its underlying `CustomAction` removed outright on publish, not just hidden
 - **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution
 - **Publish to Dynamics** — imports a small throwaway unmanaged solution carrying just your changes, publishes the entity, and removes the temporary solution. Merges into the entity's actual existing ribbon customization rather than replacing it, so anything you didn't touch (this tool's own earlier edits, Ribbon Workbench, hand edits) is preserved. You'll be prompted to pick a publisher if more than one is available.
 - **Regenerate Ribbon Metadata…** — triggers the same environment-wide operation as Command Checker's own button, and tracks its progress via Solution History
+
+New tabs, groups, controls, commands, and rules get ids in the form `<publisher prefix>.<entity>.<name>.<kind>` (e.g. `new.account.myaction.button`) — you'll be prompted for a publisher prefix the first time you open the ribbon editor in a workspace, saved to `d365.ribbonEditor.publisherPrefix` for reuse.
 
 ## Title Bar Actions
 
@@ -198,6 +201,7 @@ All settings are resource-scoped (workspace-folder scoped) and can be set in `.v
 | `d365.authMode` | `user` or `clientCredentials`. Leave blank to be prompted each time | — |
 | `d365.webResources.rootFolder` | Workspace-relative folder that maps to Dataverse web resources | `webresources` |
 | `d365.webResources.namePrefix` | Prefix prepended to a file's relative path to form its web resource name (trailing `/` added automatically) | — |
+| `d365.ribbonEditor.publisherPrefix` | Publisher prefix used to build ids for anything created in the ribbon editor | — |
 
 ## Claude / AI Integration (MCP Server)
 

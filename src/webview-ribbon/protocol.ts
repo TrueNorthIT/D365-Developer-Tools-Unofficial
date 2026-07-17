@@ -72,7 +72,7 @@ export interface RibbonModel {
 
 // ── Events: Extension → Webview ───────────────────────────────────────────────
 export type InboundMessage =
-  | { type: 'ribbonModel'; entityLogicalName: string; entityDisplayName: string; ribbonLocationLabel: string; model: RibbonModel }
+  | { type: 'ribbonModel'; entityLogicalName: string; entityDisplayName: string; ribbonLocationLabel: string; publisherPrefix: string; model: RibbonModel }
   | { type: 'ribbonError'; message: string }
   | { type: 'ribbonLoading' };
 

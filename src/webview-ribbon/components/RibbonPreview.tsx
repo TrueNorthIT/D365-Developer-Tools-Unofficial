@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { RibbonControl, RibbonGroup, RibbonModel, RibbonNodeStatus, RibbonTab } from '../protocol';
-import { displayText, locationOf, type Location, type Selection } from '../ribbonState';
+import { displayText, locationOf, type Location, type PromptRequest, type Selection } from '../ribbonState';
 import { RibbonIcon } from './RibbonIcon';
 
 interface Props {
@@ -12,13 +12,18 @@ interface Props {
   onSelect: (selection: Selection) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
   onDeleteControl: (controlId: string) => void;
+  onRequestPrompt: (request: PromptRequest) => void;
 }
+
+const CONTROL_KINDS: RibbonControl['kind'][] = ['Button', 'SplitButton', 'FlyoutAnchor'];
 
 // Renders the ribbon roughly as it appears in Dynamics itself: a tab strip, then the active tab's
 // groups as bordered boxes containing icon+label button tiles — replacing the earlier plain text
 // tree, which was unusable once real data showed up (hundreds of buttons/commands/rules at once).
-export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onDeleteControl }: Props) {
+export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onDeleteControl, onRequestPrompt }: Props) {
   const [ctxMenu, setCtxMenu] = useState<{ control: RibbonControl; x: number; y: number } | null>(null);
+  const [groupCtxMenu, setGroupCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [tabStripCtxMenu, setTabStripCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const visibleTabs = model.tabs.filter(t => t.status !== 'deleted' && (location === 'All' || locationOf(t.id) === location));
   const activeTab = visibleTabs.find(t => t.id === activeTabId) ?? visibleTabs[0];
 
@@ -30,7 +35,10 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
 
   return (
     <div className="ribbon-preview">
-      <div className="ribbon-tabstrip">
+      <div
+        className="ribbon-tabstrip"
+        onContextMenu={e => { e.preventDefault(); setTabStripCtxMenu({ x: e.clientX, y: e.clientY }); }}
+      >
         {visibleTabs.map(tab => (
           <button
             key={tab.id}
@@ -59,6 +67,7 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
               onSelect({ kind: 'control', tabId: activeTab!.id, groupId, id: control.id });
               setCtxMenu({ control, x, y });
             }}
+            onGroupContextMenu={(groupId, x, y) => setGroupCtxMenu({ groupId, x, y })}
           />
         )}
 
@@ -69,6 +78,25 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
           y={ctxMenu.y}
           onClose={() => setCtxMenu(null)}
           onDelete={onDeleteControl}
+        />
+      )}
+
+      {groupCtxMenu && (
+        <GroupContextMenu
+          x={groupCtxMenu.x}
+          y={groupCtxMenu.y}
+          onClose={() => setGroupCtxMenu(null)}
+          onAddControl={kind => onRequestPrompt({ kind: 'control', tabId: activeTab!.id, groupId: groupCtxMenu.groupId, controlKind: kind })}
+          onAddGroup={() => onRequestPrompt({ kind: 'group', tabId: activeTab!.id })}
+        />
+      )}
+
+      {tabStripCtxMenu && (
+        <TabStripContextMenu
+          x={tabStripCtxMenu.x}
+          y={tabStripCtxMenu.y}
+          onClose={() => setTabStripCtxMenu(null)}
+          onAddTab={() => onRequestPrompt({ kind: 'tab' })}
         />
       )}
     </div>
@@ -86,7 +114,7 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
 // Recomputed on mount/group-set change and on resize (a ResizeObserver, since the panel itself can
 // be resized, changing how many groups fit per row) -- there's no way to ask CSS which row a
 // flex-wrap item landed in, so this measures the real DOM after layout.
-function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect, onReorderControl, onControlContextMenu }: {
+function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlSelect, onReorderControl, onControlContextMenu, onGroupContextMenu }: {
   groups: RibbonGroup[];
   selection: Selection;
   onSelect: (selection: Selection) => void;
@@ -94,6 +122,7 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
   onControlSelect: (groupId: string, controlId: string) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
   onControlContextMenu: (groupId: string, control: RibbonControl, x: number, y: number) => void;
+  onGroupContextMenu: (groupId: string, x: number, y: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupElements = useRef(new Map<string, HTMLDivElement>());
@@ -156,7 +185,11 @@ function RibbonGroupLines({ groups, selection, onSelect, activeTabId, onControlS
         <div key={i} className="ribbon-line-bg" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />
       ))}
       {groups.map(group => (
-        <div key={group.id} className="ribbon-group-block">
+        <div
+          key={group.id}
+          className="ribbon-group-block"
+          onContextMenu={e => { e.preventDefault(); onGroupContextMenu(group.id, e.clientX, e.clientY); }}
+        >
           <div
             className={'ribbon-group' + statusSuffix(group.status) + (dividerAfter.has(group.id) ? ' has-divider' : '')}
             ref={el => {
@@ -257,6 +290,7 @@ function GroupButtons({ groupId, controls, selection, onControlSelect, onReorder
             onDropOnTile={e => { if (!draggingId) { return; } e.preventDefault(); e.stopPropagation(); commitDrop(); }}
             onContextMenu={e => {
               e.preventDefault();
+              e.stopPropagation(); // otherwise this would also bubble up and open the group's own context menu
               onControlContextMenu(groupId, control, e.clientX, e.clientY);
             }}
           />,
@@ -310,25 +344,12 @@ function statusSuffix(status: RibbonNodeStatus): string {
   return status === 'unchanged' ? '' : ` status-${status}`;
 }
 
-// Right-click menu for a single button tile, acting on whichever control was right-clicked rather
-// than requiring it to already be selected.
-//
-// A single Delete/Restore action, same as the toolbar's generic "Delete / Restore" button -- what it
-// actually does under the hood (remove outright vs. mark hidden) depends on the control, but that's
-// resolved by deleteOrHideControl in ribbonState.ts, not something the menu needs to expose or gate
-// on. This used to be two separately-disabled Hide/Delete buttons -- reflecting the model's internal
-// mechanics (Dataverse can't truly delete a built-in button, only hide it) rather than what the user
-// is actually trying to do, which is just "get rid of this button" either way. Whether that ends up
-// as a real removal (see mergeRibbonDiffXml's removedCustomActionIds) or a HideCustomAction is only
-// knowable once the entity's real existing diff is fetched at publish time -- not something this
-// editor can predict from the loaded model, so it's no longer something the button-click UI guesses at.
-function ButtonContextMenu({ control, x, y, onClose, onDelete }: {
-  control: RibbonControl;
-  x: number;
-  y: number;
-  onClose: () => void;
-  onDelete: (controlId: string) => void;
-}) {
+// Shared positioning/dismissal shell for every right-click menu in this file (button tile, group,
+// tab strip) -- repositions near the click point but never off-screen, and closes on an outside
+// click, any scroll, or Escape. Follows the same pattern as the entity explorer's ContextMenu
+// (src/webview/components/ContextMenu.tsx) -- kept local rather than shared since the two have no
+// target/action shape in common beyond this dismissal behavior.
+function PositionedMenu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
 
@@ -361,13 +382,65 @@ function ButtonContextMenu({ control, x, y, onClose, onDelete }: {
 
   return (
     <div className="ribbon-ctx-menu" ref={menuRef} style={{ left: pos.x, top: pos.y }}>
-      <button
-        type="button"
-        onClick={() => { onClose(); onDelete(control.id); }}
-      >
+      {children}
+    </div>
+  );
+}
+
+// Right-click menu for a single button tile, acting on whichever control was right-clicked rather
+// than requiring it to already be selected.
+//
+// A single Delete/Restore action, same as the toolbar's generic "Delete / Restore" button -- what it
+// actually does under the hood (remove outright vs. mark hidden) depends on the control, but that's
+// resolved by deleteOrHideControl in ribbonState.ts, not something the menu needs to expose or gate
+// on. This used to be two separately-disabled Hide/Delete buttons -- reflecting the model's internal
+// mechanics (Dataverse can't truly delete a built-in button, only hide it) rather than what the user
+// is actually trying to do, which is just "get rid of this button" either way. Whether that ends up
+// as a real removal (see mergeRibbonDiffXml's removedCustomActionIds) or a HideCustomAction is only
+// knowable once the entity's real existing diff is fetched at publish time -- not something this
+// editor can predict from the loaded model, so it's no longer something the button-click UI guesses at.
+function ButtonContextMenu({ control, x, y, onClose, onDelete }: {
+  control: RibbonControl;
+  x: number;
+  y: number;
+  onClose: () => void;
+  onDelete: (controlId: string) => void;
+}) {
+  return (
+    <PositionedMenu x={x} y={y} onClose={onClose}>
+      <button type="button" onClick={() => { onClose(); onDelete(control.id); }}>
         {control.status === 'deleted' ? 'Restore' : 'Delete'}
       </button>
-    </div>
+    </PositionedMenu>
+  );
+}
+
+// Right-click menu for a group's background/caption (anywhere in its .ribbon-group-block, i.e. not
+// on a specific button tile -- see the tile's own onContextMenu stopping propagation above): create
+// a new control directly in this group, or a new group alongside it in the current tab.
+function GroupContextMenu({ x, y, onClose, onAddControl, onAddGroup }: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  onAddControl: (kind: RibbonControl['kind']) => void;
+  onAddGroup: () => void;
+}) {
+  return (
+    <PositionedMenu x={x} y={y} onClose={onClose}>
+      {CONTROL_KINDS.map(kind => (
+        <button key={kind} type="button" onClick={() => { onClose(); onAddControl(kind); }}>+ {kind}</button>
+      ))}
+      <button type="button" onClick={() => { onClose(); onAddGroup(); }}>+ Group</button>
+    </PositionedMenu>
+  );
+}
+
+// Right-click menu for the tab strip: create a new tab.
+function TabStripContextMenu({ x, y, onClose, onAddTab }: { x: number; y: number; onClose: () => void; onAddTab: () => void }) {
+  return (
+    <PositionedMenu x={x} y={y} onClose={onClose}>
+      <button type="button" onClick={() => { onClose(); onAddTab(); }}>+ Tab</button>
+    </PositionedMenu>
   );
 }
 
