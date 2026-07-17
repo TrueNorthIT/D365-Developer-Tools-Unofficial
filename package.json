@@ -149,7 +149,7 @@
         "d365.ribbonEditor.publisherPrefix": {
           "type": "string",
           "default": "",
-          "scope": "window",
+          "scope": "resource",
           "description": "Publisher prefix used to build ids for anything created in the ribbon editor, e.g. 'new' for an id like new.account.myaction.button. Prompted for once and saved here; leave blank to be prompted again next time the ribbon editor is opened."
         }
       }
