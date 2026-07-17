@@ -127,6 +127,23 @@ export class RelativePattern {
     constructor(public base: unknown, public pattern: string) {}
 }
 
+export class FileSystemWatcherMock {
+    private readonly _onDidCreate = new EventEmitter<Uri>();
+    private readonly _onDidChange = new EventEmitter<Uri>();
+    private readonly _onDidDelete = new EventEmitter<Uri>();
+
+    onDidCreate = this._onDidCreate.event;
+    onDidChange = this._onDidChange.event;
+    onDidDelete = this._onDidDelete.event;
+
+    dispose(): void {}
+
+    // test helpers
+    triggerCreate(uri: Uri = Uri.file('')): void { this._onDidCreate.fire(uri); }
+    triggerChange(uri: Uri = Uri.file('')): void { this._onDidChange.fire(uri); }
+    triggerDelete(uri: Uri = Uri.file('')): void { this._onDidDelete.fire(uri); }
+}
+
 export class WorkspaceEdit {
     readonly edits: Array<{ type: 'replace' | 'insert'; uri: Uri; range?: Range; position?: Position; text: string }> = [];
     replace(uri: Uri, range: Range, text: string): void { this.edits.push({ type: 'replace', uri, range, text }); }
@@ -157,6 +174,32 @@ export class InputBoxMock {
     // test helpers
     triggerAccept(): void { this._onDidAccept.fire(); }
     triggerButton(btn: { iconPath?: unknown; tooltip?: string } = {}): void { this._onDidTriggerButton.fire(btn); }
+}
+
+// ── QuickPick (manual, not showQuickPick's promise-returning helper) ──────────
+
+export class QuickPickMock<T = any> {
+    title = '';
+    placeholder = '';
+    items: T[] = [];
+    activeItems: T[] = [];
+    selectedItems: T[] = [];
+
+    private readonly _onDidAccept = new EventEmitter<void>();
+    private readonly _onDidHide = new EventEmitter<void>();
+
+    onDidAccept = this._onDidAccept.event;
+    onDidHide = this._onDidHide.event;
+
+    show(): void {}
+    hide(): void { this._onDidHide.fire(); }
+    dispose(): void {}
+
+    // test helpers
+    triggerAccept(selected: T[] = this.activeItems): void {
+        this.selectedItems = selected;
+        this._onDidAccept.fire();
+    }
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -200,6 +243,8 @@ export const workspace = {
         stat: async (_uri: Uri): Promise<{ type: FileType }> => ({ type: FileType.File }),
     },
 
+    createFileSystemWatcher: (..._args: any[]): FileSystemWatcherMock => new FileSystemWatcherMock(),
+
     openTextDocument: async (uri: Uri) => ({
         uri,
         lineAt: (n: number) => ({ lineNumber: n, text: '', range: new Range(new Position(n, 0), new Position(n, 0)) }),
@@ -232,6 +277,8 @@ export const window = {
     }),
 
     createInputBox: (): InputBoxMock => new InputBoxMock(),
+
+    createQuickPick: (): QuickPickMock => new QuickPickMock(),
 
     registerWebviewViewProvider: (): Disposable => new Disposable(),
 };
