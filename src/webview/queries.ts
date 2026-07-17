@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { AttributeInfo } from './protocol';
 import { request } from './rpc';
-import { decodeSvg } from './helpers';
+import { decodeIconContent, type IconContent } from './helpers';
 
 // Schema data barely changes within a session, so cache aggressively and never treat it as
 // stale on its own; it's explicitly dropped on reconnect (see useExtensionState).
@@ -17,8 +17,9 @@ export function useAttributes(entityLogicalName: string, enabled: boolean) {
 }
 
 /**
- * A table's icon, decoded to inline SVG markup (or null when it has none). `key` is the icon
- * source key from helpers.iconKey(); the query is disabled when there's nothing to fetch.
+ * A table's icon, decoded to inline SVG markup or a raster data: URI (or null when it has none).
+ * `key` is the icon source key from helpers.iconKey(); the query is disabled when there's nothing
+ * to fetch.
  */
 export function useIcon(key: string | null) {
   return useQuery({
@@ -26,7 +27,7 @@ export function useIcon(key: string | null) {
     queryFn: () => request('getIcon', { key: key as string }),
     enabled: !!key,
     staleTime: Infinity,
-    select: (content): string | null => (content ? decodeSvg(content) : null),
+    select: (content): IconContent | null => (content ? decodeIconContent(content) : null),
   });
 }
 
