@@ -1,5 +1,9 @@
 import * as zlib from 'zlib';
 
+// See decompressRibbon.md (same folder) for a full write-up of the payload format this decompresses
+// and the ZIP/OPC parsing below -- kept out of this file's own comments so it doesn't have to compete
+// with the code for space, but it's the first place to look before touching any of this.
+//
 // RetrieveEntityRibbon's CompressedEntityXml is base64 data whose actual container format isn't
 // consistently documented across sources — some decompress it as plain gzip (GZipStream), but the
 // canonical Microsoft sample opens it as an OPC package (System.IO.Packaging.Package — the same
