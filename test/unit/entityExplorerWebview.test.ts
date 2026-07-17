@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscodeMock from '../mocks/vscode';
 import { EntityExplorerWebviewProvider } from '../../src/entityExplorerWebview';
-import type { ConnectionManager, D365Connection } from '../../src/connectionManager';
+import type { ConnectionManager, D365Connection, DefaultSolutionRef } from '../../src/connectionManager';
 import type { DataverseClient, AttributeDefinition, OptionValue, EntityDefinition, Solution } from '../../src/dataverseClient';
 import type { EntityCache } from '../../src/entityCache';
 
@@ -29,6 +29,8 @@ interface FakeConnectionManager {
     emitter: { fire: (conn: D365Connection | undefined) => void };
     state: { isConnected: boolean; isRestoring: boolean };
     connect: sinon.SinonStub;
+    getDefaultSolution: sinon.SinonStub;
+    setDefaultSolution: sinon.SinonStub;
 }
 
 function makeConnectionManager(overrides: Partial<{ isConnected: boolean; isRestoring: boolean }> = {}): FakeConnectionManager {
@@ -38,9 +40,13 @@ function makeConnectionManager(overrides: Partial<{ isConnected: boolean; isRest
     let connection: D365Connection | undefined = state.isConnected ? fakeConnection() : undefined;
     const rawEmitter = new vscodeMock.EventEmitter<D365Connection | undefined>();
     const connect = sinon.stub().resolves();
+    const getDefaultSolution = sinon.stub().returns(undefined);
+    const setDefaultSolution = sinon.stub().resolves();
     const cm = {
         onDidChangeConnection: rawEmitter.event,
         connect,
+        getDefaultSolution,
+        setDefaultSolution,
         get connection() { return connection; },
         get isConnected() { return state.isConnected; },
         get isRestoring() { return state.isRestoring; },
@@ -51,7 +57,7 @@ function makeConnectionManager(overrides: Partial<{ isConnected: boolean; isRest
             rawEmitter.fire(conn);
         },
     };
-    return { cm, emitter, state, connect };
+    return { cm, emitter, state, connect, getDefaultSolution, setDefaultSolution };
 }
 
 function makeEntityCache(initial?: EntityDefinition[]): { entityCache: EntityCache; get: sinon.SinonStub; set: sinon.SinonStub } {
@@ -569,6 +575,73 @@ describe('EntityExplorerWebviewProvider', () => {
 
             assert.ok(postMessage.calledWith({ type: 'entities', data: freshEntities }));
             assert.ok(set.calledWith('https://contoso.crm.dynamics.com', freshEntities));
+        });
+    });
+
+    // ── default solution (auto-apply on connect, persisted from the picker, clear round-trip) ──
+
+    describe('default solution', () => {
+        it('auto-applies the persisted default solution as a filter once connected', async () => {
+            // The auto-apply logic lives in the constructor's onDidChangeConnection subscription, so
+            // it must be exercised via emitter.fire(...) -- not the 'ready' message handler, which only
+            // (re)loads entities.
+            const { cm, emitter, getDefaultSolution } = makeConnectionManager();
+            const defaultSolution: DefaultSolutionRef = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+            getDefaultSolution.returns(defaultSolution);
+            const { client, getEntities, getSolutionEntityIds } = makeClient();
+            getEntities.resolves([]);
+            getSolutionEntityIds.resolves(new Set(['e1']));
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const { view, postMessage } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            emitter.fire(fakeConnection());
+            await flush();
+
+            assert.ok(getSolutionEntityIds.calledWith('s1'));
+            assert.ok(postMessage.calledWith({ type: 'solutionFilter', name: 'Solution One', entityIds: ['e1'] }));
+        });
+
+        it('does not apply any filter when no default solution is set', async () => {
+            const { cm, emitter } = makeConnectionManager();
+            const { client, getEntities, getSolutionEntityIds } = makeClient();
+            getEntities.resolves([]);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const { view } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            emitter.fire(fakeConnection());
+            await flush();
+
+            assert.strictEqual(getSolutionEntityIds.callCount, 0);
+        });
+
+        it("'showSolutionPicker' persists the chosen solution as the new default", async () => {
+            const { cm, setDefaultSolution } = makeConnectionManager({ isConnected: true });
+            const { client, getSolutions, getSolutionEntityIds } = makeClient();
+            const solution: Solution = { solutionId: 's2', uniqueName: 'sol2', friendlyName: 'Solution Two' };
+            getSolutions.resolves([solution]);
+            getSolutionEntityIds.resolves(new Set(['e9']));
+            sinon.stub(vscodeMock.window, 'showQuickPick').callsFake(async (items: any) => items[0]);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const { view, getHandler } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            await getHandler()({ type: 'showSolutionPicker' });
+
+            assert.ok(setDefaultSolution.calledOnceWith(solution));
+        });
+
+        it("'clearSolutionFilter' clears the persisted default solution", async () => {
+            const { cm, setDefaultSolution } = makeConnectionManager({ isConnected: true });
+            const { client } = makeClient();
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const { view, getHandler } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            await getHandler()({ type: 'clearSolutionFilter' });
+
+            assert.ok(setDefaultSolution.calledOnceWith(undefined));
         });
     });
 });

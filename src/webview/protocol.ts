@@ -44,6 +44,7 @@ export type OutboundMessage =
   | { type: 'ready' }
   | { type: 'connect' }
   | { type: 'showSolutionPicker' }
+  | { type: 'clearSolutionFilter' }
   | { type: 'makeInterface'; entityLogicalName: string; entityDisplayName: string }
   | {
       type: 'makeEnum';

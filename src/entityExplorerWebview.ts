@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import type { ConnectionManager } from './connectionManager';
-import type { DataverseClient } from './dataverseClient';
+import type { ConnectionManager, DefaultSolutionRef } from './connectionManager';
+import type { DataverseClient, Solution } from './dataverseClient';
 import type { EntityCache } from './entityCache';
 import { generateInterface, generateEnum, toPascalCase, OPTION_SET_TYPES } from './interfaceGenerator';
 
@@ -20,7 +20,11 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
     ) {
         connectionManager.onDidChangeConnection(conn => {
             this.post({ type: 'connectionState', connected: !!conn, restoring: false });
-            if (conn) { void this.sendEntities(); }
+            if (conn) {
+                void this.sendEntities();
+                const defaultSolution = connectionManager.getDefaultSolution();
+                if (defaultSolution) { void this.applySolutionFilter(defaultSolution); }
+            }
         });
     }
 
@@ -66,6 +70,9 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
                 break;
             case 'showSolutionPicker':
                 await this.showSolutionPicker();
+                break;
+            case 'clearSolutionFilter':
+                await this.connectionManager.setDefaultSolution(undefined);
                 break;
             case 'makeInterface':
                 await this.makeInterface(
@@ -254,7 +261,7 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
     }
 
     private async showSolutionPicker(): Promise<void> {
-        let solutions;
+        let solutions: Solution[];
         try {
             solutions = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solutions…', cancellable: false },
@@ -271,18 +278,31 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         );
         if (!pick) { return; }
 
+        // The solution used to filter this view doubles as the "default solution" for new components
+        // (see webResourceManager.ts's pickSolution) and is re-applied automatically on future connects.
+        await this.connectionManager.setDefaultSolution(pick.solution);
+        await this.applySolutionFilter(pick.solution, /* showProgress */ true);
+    }
+
+    // showProgress is suppressed for the auto-apply-on-connect path so restoring a connection doesn't
+    // pop a notification toast on every reload -- only an explicit "Filter by Solution" pick shows one.
+    private async applySolutionFilter(solution: DefaultSolutionRef, showProgress = false): Promise<void> {
+        const load = () => this.client.getSolutionEntityIds(solution.solutionId);
+
         let entityIds;
         try {
-            entityIds = await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solution components…', cancellable: false },
-                () => this.client.getSolutionEntityIds(pick.solution.solutionId),
-            );
+            entityIds = showProgress
+                ? await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solution components…', cancellable: false },
+                    load,
+                )
+                : await load();
         } catch (err) {
             vscode.window.showErrorMessage(`Failed to load solution components: ${errMsg(err)}`);
             return;
         }
 
-        this.post({ type: 'solutionFilter', name: pick.solution.friendlyName, entityIds: [...entityIds] });
+        this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: [...entityIds] });
     }
 
     private post(message: unknown): void {

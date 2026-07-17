@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ConnectionManager } from './connectionManager';
+import type { ConnectionManager, DefaultSolutionRef } from './connectionManager';
 import type { DataverseClient } from './dataverseClient';
 import type { Solution } from './dataverseClient';
 
@@ -135,7 +135,7 @@ export async function publishWebResources(
         return;
     }
 
-    await runPublish(files, client);
+    await runPublish(files, client, connectionManager);
 }
 
 // Guided setup for the web resources root folder and name prefix, triggered from the D365 Explorer view title menu.
@@ -233,12 +233,12 @@ export async function publishWebResourcesCommand(
     );
     if (!picks?.length) { return; }
 
-    await runPublish(picks.map(p => p.uri), client);
+    await runPublish(picks.map(p => p.uri), client, connectionManager);
 }
 
 // ── Orchestration ────────────────────────────────────────────────────────────
 
-async function runPublish(files: vscode.Uri[], client: DataverseClient): Promise<void> {
+async function runPublish(files: vscode.Uri[], client: DataverseClient, connectionManager: ConnectionManager): Promise<void> {
     const publishedIds: string[] = [];
     const errors: string[] = [];
 
@@ -248,7 +248,7 @@ async function runPublish(files: vscode.Uri[], client: DataverseClient): Promise
             for (const file of files) {
                 progress.report({ message: vscode.workspace.asRelativePath(file, false) });
                 try {
-                    const id = await publishSingleFile(file, client);
+                    const id = await publishSingleFile(file, client, connectionManager);
                     if (id) { publishedIds.push(id); }
                 } catch (err) {
                     errors.push(`${vscode.workspace.asRelativePath(file, false)}: ${errorMessage(err)}`);
@@ -275,7 +275,7 @@ async function runPublish(files: vscode.Uri[], client: DataverseClient): Promise
     }
 }
 
-async function publishSingleFile(fileUri: vscode.Uri, client: DataverseClient): Promise<string | undefined> {
+async function publishSingleFile(fileUri: vscode.Uri, client: DataverseClient, connectionManager: ConnectionManager): Promise<string | undefined> {
     const name = toWebResourceName(fileUri);
     if (!name) {
         throw new Error('File is not under the configured web resources root folder (see d365.webResources.rootFolder).');
@@ -311,7 +311,7 @@ async function publishSingleFile(fileUri: vscode.Uri, client: DataverseClient): 
     const type = await pickWebResourceType(guessedType);
     if (!type) { return undefined; }
 
-    const solution = await pickSolution(client);
+    const solution = await pickSolution(client, connectionManager.getDefaultSolution());
     if (solution === undefined) { return undefined; }
 
     const id = await client.createWebResource({ name, displayName, type, contentBase64 });
@@ -409,7 +409,9 @@ async function pickWebResourceType(guessed: number): Promise<number | undefined>
 }
 
 // Returns the chosen solution, null for "don't add to a solution", or undefined if cancelled.
-async function pickSolution(client: DataverseClient): Promise<Solution | null | undefined> {
+// Pre-highlights (but doesn't auto-confirm) the connection's default solution, if one is set --
+// see connectionManager.ts's getDefaultSolution / entityExplorerWebview.ts's showSolutionPicker.
+async function pickSolution(client: DataverseClient, defaultSolution: DefaultSolutionRef | undefined): Promise<Solution | null | undefined> {
     let solutions: Solution[];
     try {
         solutions = await client.getSolutions();
@@ -421,14 +423,32 @@ async function pickSolution(client: DataverseClient): Promise<Solution | null | 
     const NONE = { label: "Don't add to a solution", solution: null as Solution | null };
     const items = [
         NONE,
-        ...solutions.map(s => ({ label: s.friendlyName, description: s.uniqueName, solution: s as Solution | null })),
+        ...solutions.map(s => ({
+            label: s.friendlyName,
+            description: s.uniqueName + (s.solutionId === defaultSolution?.solutionId ? ' (default)' : ''),
+            solution: s as Solution | null,
+        })),
     ];
 
-    const pick = await vscode.window.showQuickPick(items, {
-        title: 'D365: Add web resource to solution',
-        placeHolder: 'Select a solution (optional)',
+    return new Promise(resolve => {
+        const qp = vscode.window.createQuickPick<typeof items[number]>();
+        qp.title = 'D365: Add web resource to solution';
+        qp.placeholder = 'Select a solution (optional)';
+        qp.items = items;
+
+        const defaultItem = items.find(i => i.solution?.solutionId === defaultSolution?.solutionId);
+        if (defaultItem) { qp.activeItems = [defaultItem]; }
+
+        qp.onDidAccept(() => {
+            resolve(qp.selectedItems[0]?.solution);
+            qp.hide();
+        });
+        qp.onDidHide(() => {
+            resolve(undefined);
+            qp.dispose();
+        });
+        qp.show();
     });
-    return pick?.solution;
 }
 
 function errorMessage(err: unknown): string {

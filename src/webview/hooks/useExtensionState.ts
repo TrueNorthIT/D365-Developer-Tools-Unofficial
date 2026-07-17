@@ -134,7 +134,10 @@ export function useExtensionState(): ExtensionApi {
 
   const connect = useCallback(() => post({ type: 'connect' }), []);
   const showSolutionPicker = useCallback(() => post({ type: 'showSolutionPicker' }), []);
-  const clearSolutionFilter = useCallback(() => dispatch({ type: 'local/clearSolution' }), []);
+  const clearSolutionFilter = useCallback(() => {
+    dispatch({ type: 'local/clearSolution' });
+    post({ type: 'clearSolutionFilter' });
+  }, []);
 
   const toggleEntity = useCallback((logicalName: string) => {
     const expanded = stateRef.current.expanded.has(logicalName);

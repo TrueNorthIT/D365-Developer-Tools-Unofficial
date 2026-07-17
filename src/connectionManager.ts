@@ -37,7 +37,16 @@ interface CachedConnection extends StoredConnection {
 const SECRET_KEY_PREFIX  = 'd365.clientSecret';
 const WORKSPACE_STATE_KEY = 'd365.connection';
 const RECENTS_STATE_KEY = 'd365.recentEnvironments';
+const DEFAULT_SOLUTION_STATE_KEY = 'd365.defaultSolutionByEnvironment';
 const MAX_RECENTS = 5;
+
+// Structurally identical to dataverseClient.ts's Solution -- kept as its own type here to avoid a
+// circular import (dataverseClient.ts already imports ConnectionManager).
+export interface DefaultSolutionRef {
+    solutionId: string;
+    uniqueName: string;
+    friendlyName: string;
+}
 
 export class ConnectionManager {
     private _connection: D365Connection | undefined;
@@ -232,6 +241,25 @@ export class ConnectionManager {
 
     getRecentEnvironments(): StoredConnection[] {
         return this.context.globalState.get<StoredConnection[]>(RECENTS_STATE_KEY, []);
+    }
+
+    // The default solution is remembered per-environment (not per-workspace-connection) so switching
+    // between recent environments doesn't bleed one org's default solution into another's.
+    getDefaultSolution(): DefaultSolutionRef | undefined {
+        if (!this._connection) { return undefined; }
+        const byEnvironment = this.context.workspaceState.get<Record<string, DefaultSolutionRef>>(DEFAULT_SOLUTION_STATE_KEY, {});
+        return byEnvironment[this._connection.environmentUrl];
+    }
+
+    async setDefaultSolution(solution: DefaultSolutionRef | undefined): Promise<void> {
+        if (!this._connection) { return; }
+        const byEnvironment = { ...this.context.workspaceState.get<Record<string, DefaultSolutionRef>>(DEFAULT_SOLUTION_STATE_KEY, {}) };
+        if (solution) {
+            byEnvironment[this._connection.environmentUrl] = solution;
+        } else {
+            delete byEnvironment[this._connection.environmentUrl];
+        }
+        await this.context.workspaceState.update(DEFAULT_SOLUTION_STATE_KEY, byEnvironment);
     }
 
     private async rememberEnvironment(stored: StoredConnection): Promise<void> {

@@ -307,6 +307,62 @@ describe('ConnectionManager', () => {
         });
     });
 
+    describe('default solution', () => {
+        function connectedContext(): { ctx: ReturnType<typeof makeContext>; cm: ConnectionManager } {
+            const ctx = makeContext();
+            const cm = new ConnectionManager(ctx);
+            (cm as unknown as { _connection: D365Connection })._connection = {
+                environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', authMode: 'user',
+            };
+            return { ctx, cm };
+        }
+
+        it('returns undefined when nothing is connected', () => {
+            const cm = new ConnectionManager(makeContext());
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('returns undefined when no default has been set for the current environment', () => {
+            const { cm } = connectedContext();
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('persists and retrieves a default solution for the current environment', async () => {
+            const { cm } = connectedContext();
+            const solution = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+
+            await cm.setDefaultSolution(solution);
+
+            assert.deepStrictEqual(cm.getDefaultSolution(), solution);
+        });
+
+        it('clears the default solution for the current environment when set to undefined', async () => {
+            const { cm } = connectedContext();
+            await cm.setDefaultSolution({ solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' });
+
+            await cm.setDefaultSolution(undefined);
+
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('keeps default solutions for different environments independent', async () => {
+            const ctx = makeContext();
+            const cm = new ConnectionManager(ctx);
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://a.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            await cm.setDefaultSolution({ solutionId: 's-a', uniqueName: 'sol-a', friendlyName: 'Solution A' });
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://b.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+            await cm.setDefaultSolution({ solutionId: 's-b', uniqueName: 'sol-b', friendlyName: 'Solution B' });
+
+            assert.deepStrictEqual(cm.getDefaultSolution(), { solutionId: 's-b', uniqueName: 'sol-b', friendlyName: 'Solution B' });
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://a.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            assert.deepStrictEqual(cm.getDefaultSolution(), { solutionId: 's-a', uniqueName: 'sol-a', friendlyName: 'Solution A' });
+        });
+    });
+
     describe('connect', () => {
         it('does nothing when the environment URL prompt is cancelled', async () => {
             vscodeMock.__setConfig('d365', {});
