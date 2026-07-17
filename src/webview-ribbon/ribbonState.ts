@@ -329,7 +329,8 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
                 : [...rest.slice(0, insertIndex), control, ...rest.slice(insertIndex)];
             if (reordered.every((c, i) => c === arr[i])) { break; } // dropped back where it started
 
-            touch(control);
+            // Persist reorder on export by re-emitting the affected controls with updated Sequences.
+            for (const c of reordered) { touch(c); }
             found.group.controls = reordered;
             break;
         }
