@@ -118,6 +118,21 @@ export function firstUnusedName(base: string, isTaken: (candidate: string) => bo
   }
 }
 
+// Recovers the {name} segment from an id this editor itself built as
+// {publisherPrefix}.{entityLogicalName}.{name}.{kindSuffix} (see buildRibbonElementId) -- returns
+// undefined if `id` doesn't actually match that shape (base ribbon, or a customization made before
+// a prefix was configured/by another tool), since there's no sensible name to default to then.
+// Used to default a command's name to its control's, and a rule's name to its command's -- both
+// created in a separate step/prompt from their parent, unlike a control's own menu section (created
+// in the very same prompt, so it can just reuse the live `name` state directly instead).
+export function extractNameSegment(id: string, publisherPrefix: string, entityLogicalName: string, kindSuffix: string): string | undefined {
+  if (!publisherPrefix) { return undefined; }
+  const prefix = `${publisherPrefix}.${entityLogicalName}.`;
+  const suffix = `.${kindSuffix}`;
+  if (!id.startsWith(prefix) || !id.endsWith(suffix) || id.length <= prefix.length + suffix.length) { return undefined; }
+  return id.slice(prefix.length, id.length - suffix.length);
+}
+
 // Every id currently in the model, at any depth -- used to validate a new name won't collide with
 // something that already exists (NamePromptDialog, via App.tsx).
 export function collectAllIds(model: RibbonModel): Set<string> {
@@ -150,7 +165,7 @@ export type LocalAction =
   | { type: 'local/updateRule'; ruleType: 'enable' | 'display'; id: string; xml: string }
   | { type: 'local/addTab'; id: string; title: string }
   | { type: 'local/addGroup'; tabId: string; id: string; title: string }
-  | { type: 'local/addControl'; tabId: string; groupId: string; kind: RibbonControl['kind']; id: string; title: string; menuSectionId?: string }
+  | { type: 'local/addControl'; tabId: string; groupId: string; kind: RibbonControl['kind']; id: string; title: string; menuSectionId?: string; commandId?: string }
   | { type: 'local/createCommandForControl'; controlId: string; id: string }
   | { type: 'local/addRuleToCommand'; commandId: string; ruleType: 'enable' | 'display'; id: string }
   | { type: 'local/removeRuleFromCommand'; commandId: string; ruleType: 'enable' | 'display'; ruleId: string }
@@ -244,10 +259,17 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
                 toolTipTitle: '',
                 toolTipDescription: '',
                 status: 'added',
+                commandId: action.commandId,
                 controls: action.kind === 'FlyoutAnchor' ? [{
                     kind: 'MenuSection', id: action.menuSectionId!, label: '', toolTipTitle: '', toolTipDescription: '', controls: [], status: 'added',
                 }] : undefined,
             };
+            // A Button/SplitButton is created with its own command already attached (see App.tsx's
+            // submitPrompt) -- FlyoutAnchor is deliberately excluded, since it opens a menu rather than
+            // invoking a command itself; its children are what actually need commands.
+            if (action.commandId) {
+                model.commandDefinitions.push({ id: action.commandId, enableRules: [], displayRules: [], actions: [], status: 'added' });
+            }
             found.group.controls.push(control);
             return { ...state, model, selection: { kind: 'control', tabId: found.tab.id, groupId: found.group.id, id: action.id } };
         }
@@ -447,3 +469,4 @@ export function selectionGroupId(selection: Selection): string | undefined {
     if (selection.kind === 'control') { return selection.groupId; }
     return undefined;
 }
+

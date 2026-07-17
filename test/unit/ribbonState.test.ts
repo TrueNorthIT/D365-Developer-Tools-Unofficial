@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import {
-  buildRibbonElementId, collectAllIds, displayText, firstUnusedName, kindSuffixFor, locationOf, reducer, slugify,
+  buildRibbonElementId, collectAllIds, displayText, extractNameSegment, firstUnusedName, kindSuffixFor, locationOf, reducer, slugify,
   type EditorState, type PromptRequest,
 } from '../../src/webview-ribbon/ribbonState';
 import type { RibbonModel } from '../../src/webview-ribbon/protocol';
@@ -148,6 +148,28 @@ describe('firstUnusedName', () => {
     });
 });
 
+describe('extractNameSegment', () => {
+    it('recovers the name segment from an id matching this editor\'s own shape', () => {
+        assert.strictEqual(extractNameSegment('new.account.myaction.button', 'new', 'account', 'button'), 'myaction');
+    });
+
+    it('returns undefined when the id does not start with the expected prefix', () => {
+        assert.strictEqual(extractNameSegment('Mscrm.HomepageGrid.contact.MainTab', 'new', 'account', 'tab'), undefined);
+    });
+
+    it('returns undefined when the id does not end with the expected kind suffix', () => {
+        assert.strictEqual(extractNameSegment('new.account.myaction.button', 'new', 'account', 'command'), undefined);
+    });
+
+    it('returns undefined when there is no publisher prefix configured', () => {
+        assert.strictEqual(extractNameSegment('new.account.myaction.button', '', 'account', 'button'), undefined);
+    });
+
+    it('returns undefined when the name segment would be empty', () => {
+        assert.strictEqual(extractNameSegment('new.account..button', 'new', 'account', 'button'), undefined);
+    });
+});
+
 describe('collectAllIds', () => {
     it('collects tab, group, control (incl. nested), command, and rule ids', () => {
         const model = baseModel();
@@ -219,6 +241,34 @@ describe('ribbonState reducer: addTab/addGroup/addControl (ids supplied by the c
         const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'new.contact.myflyout.flyoutanchor')!;
         assert.strictEqual(control.controls?.[0].id, 'new.contact.myflyout.menusection');
         assert.strictEqual(control.controls?.[0].kind, 'MenuSection');
+    });
+
+    it('addControl creates and links a command when the caller supplies a commandId (Button/SplitButton, via App.tsx)', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, {
+            type: 'local/addControl', tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', kind: 'Button',
+            id: 'new.contact.mybutton.button', title: 'My Button', commandId: 'new.contact.mybutton.command',
+        });
+
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'new.contact.mybutton.button')!;
+        assert.strictEqual(control.commandId, 'new.contact.mybutton.command');
+
+        const command = next.model!.commandDefinitions.find(c => c.id === 'new.contact.mybutton.command')!;
+        assert.ok(command, 'expected the auto-created command definition to exist');
+        assert.strictEqual(command.status, 'added');
+        assert.deepStrictEqual(command.enableRules, []);
+    });
+
+    it('addControl leaves commandId unset (and creates no command) when the caller omits it (e.g. FlyoutAnchor)', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, {
+            type: 'local/addControl', tabId: 'Mscrm.HomepageGrid.contact.MainTab', groupId: 'grp1', kind: 'FlyoutAnchor',
+            id: 'new.contact.myflyout.flyoutanchor', title: 'My Flyout', menuSectionId: 'new.contact.myflyout.menusection',
+        });
+
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'new.contact.myflyout.flyoutanchor')!;
+        assert.strictEqual(control.commandId, undefined);
+        assert.strictEqual(next.model!.commandDefinitions.length, state.model!.commandDefinitions.length);
     });
 });
 

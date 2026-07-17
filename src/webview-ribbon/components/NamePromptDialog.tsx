@@ -9,6 +9,12 @@ interface Props {
   /** Every id already in the model -- used to preview the id live and flag a collision before
    *  submitting (App.tsx recomputes this on every render via collectAllIds, cheap enough for a modal). */
   existingIds: Set<string>;
+  /** Pre-filled starting value for the Name field -- e.g. a command defaults to its control's name,
+   *  a rule to its command's (see App.tsx, which derives this via extractNameSegment). Already
+   *  de-duplicated by the caller; empty/undefined when there's no sensible default (tabs, groups,
+   *  and controls have nothing to inherit a name from). Purely a starting value -- the user can still
+   *  freely edit it, and doing so behaves exactly like typing into a blank field. */
+  initialName?: string;
   onSubmit: (name: string, menuSectionName?: string) => void;
   onClose: () => void;
 }
@@ -24,17 +30,18 @@ interface Props {
 // below) is computed here from `name`/`menuSectionName` state on every render, rather than passed in
 // as a precomputed prop from App.tsx -- a prop computed once at open time can't reflect what's
 // actually been typed since, which is exactly why the preview used to look frozen.
-export function NamePromptDialog({ title, request, publisherPrefix, entityLogicalName, existingIds, onSubmit, onClose }: Props) {
-  const [name, setName] = useState('');
+export function NamePromptDialog({ title, request, publisherPrefix, entityLogicalName, existingIds, initialName, onSubmit, onClose }: Props) {
+  const [name, setName] = useState(initialName ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const isButtonLikeControl = request.kind === 'control' && (request.controlKind === 'Button' || request.controlKind === 'SplitButton');
   const hasMenuSection = request.kind === 'control' && request.controlKind === 'FlyoutAnchor';
   const [menuSectionName, setMenuSectionName] = useState('');
   const [menuSectionTouched, setMenuSectionTouched] = useState(false);
 
   useEffect(() => {
     inputRef.current?.focus();
-    inputRef.current?.select();
+    inputRef.current?.select(); // easy to overtype a pre-filled default (see initialName) in one go
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { onClose(); } };
@@ -87,6 +94,7 @@ export function NamePromptDialog({ title, request, publisherPrefix, entityLogica
           />
         </label>
         <p className="hint">Id will be "{previewId(name, mainKindSuffix) ?? mainKindSuffix}".</p>
+        {isButtonLikeControl && <p className="hint">A command will be created automatically with this same name.</p>}
         {mainError && <p className="hint dialog-error">{mainError}</p>}
 
         {hasMenuSection && (
