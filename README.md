@@ -167,7 +167,7 @@ Each entity/location combination opens in its own editor tab, since they're mate
 **What you can do**
 
 - Browse the effective ribbon (tabs → groups → buttons/split-buttons/flyouts) rendered to look like the real thing, icons included
-- Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules
+- Select any tab, group, or control to inspect and edit its label, tooltip, command, and enable/display rules — right-click a rule tile to remove it from its command directly
 - Add new tabs, groups, and controls from the toolbar or by right-clicking a tab strip/group; creating a Button or SplitButton automatically creates and attaches a command with a matching name, and new enable/display rules default their name to match the button too
 - Mark existing tabs/groups/controls for deletion, or restore them — a control that's a prior customization has its underlying `CustomAction` removed outright on publish, not just hidden
 - **Export RibbonDiffXml** — generates a diff fragment from your edits, opened as a new unsaved document ready to import via a solution

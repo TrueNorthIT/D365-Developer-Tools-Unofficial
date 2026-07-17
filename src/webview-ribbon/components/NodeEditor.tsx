@@ -3,6 +3,7 @@ import type { RibbonAction, RibbonActionParameter, RibbonControl, RibbonModel, R
 import { displayText, findControl, findGroup, findTab, type Action, type PromptRequest, type Selection } from '../ribbonState';
 import { parseRuleCondition, ruleConditionLabel } from '../ruleCondition';
 import { ParametersDialog } from './ParametersDialog';
+import { PositionedMenu } from './PositionedMenu';
 import { RuleDialog } from './RuleDialog';
 import { WebResourceField } from './WebResourceField';
 
@@ -201,6 +202,7 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
   onRequestPrompt: (request: PromptRequest) => void;
 }) {
   const [openRuleId, setOpenRuleId] = useState<string | undefined>(undefined);
+  const [ctxMenu, setCtxMenu] = useState<{ ruleId: string; x: number; y: number } | null>(null);
   // This component instance stays mounted as the selected button/command changes (it's always
   // rendered in the same spot in CommandSection) -- so the rule count "increasing" only means "a
   // rule was just added to THIS command" when commandId hasn't also changed. Without that guard,
@@ -217,6 +219,10 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
 
   const openRule = rules.find(r => r.id === openRuleId);
 
+  const removeRule = (ruleId: string): void => {
+    dispatch({ type: 'local/removeRuleFromCommand', commandId, ruleType, ruleId });
+  };
+
   return (
     <div className="rule-group">
       <div className="rule-group-header">
@@ -231,6 +237,7 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
             type="button"
             className={'rule-tile' + statusSuffix(rule.status)}
             onClick={() => setOpenRuleId(rule.id)}
+            onContextMenu={e => { e.preventDefault(); setCtxMenu({ ruleId: rule.id, x: e.clientX, y: e.clientY }); }}
             title={rule.id}
           >
             <span className="rule-tile-name">{rule.id}</span>
@@ -238,6 +245,12 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
           </button>
         ))}
       </div>
+
+      {ctxMenu && (
+        <PositionedMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)}>
+          <button type="button" onClick={() => { setCtxMenu(null); removeRule(ctxMenu.ruleId); }}>Remove</button>
+        </PositionedMenu>
+      )}
 
       {openRule && (
         <RuleDialog
@@ -249,7 +262,7 @@ function RuleGroup({ title, rules, referencedCount, ruleType, commandId, dispatc
             setOpenRuleId(undefined);
           }}
           onRemove={() => {
-            dispatch({ type: 'local/removeRuleFromCommand', commandId, ruleType, ruleId: openRule.id });
+            removeRule(openRule.id);
             setOpenRuleId(undefined);
           }}
           onClose={() => setOpenRuleId(undefined)}
