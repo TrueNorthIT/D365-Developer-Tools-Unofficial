@@ -32,6 +32,11 @@ export type InboundMessage =
   | { type: 'entitiesLoading' }
   | { type: 'entities'; data: EntityInfo[] }
   | { type: 'entitiesError'; message: string }
+  // A cached entity list is already showing (see 'entities') and a background refetch has started.
+  | { type: 'entitiesRefreshing' }
+  // The background refetch completed -- unlike 'entities', this must NOT reset expand/collapse state,
+  // since the user may already be interacting with the tree the cached 'entities' message rendered.
+  | { type: 'entitiesRefreshed'; data: EntityInfo[] }
   | { type: 'solutionFilter'; name: string; entityIds: string[] };
 
 // ── Events: Webview → Extension ───────────────────────────────────────────────

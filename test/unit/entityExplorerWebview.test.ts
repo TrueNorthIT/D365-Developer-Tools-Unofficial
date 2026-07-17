@@ -4,6 +4,7 @@ import * as vscodeMock from '../mocks/vscode';
 import { EntityExplorerWebviewProvider } from '../../src/entityExplorerWebview';
 import type { ConnectionManager, D365Connection } from '../../src/connectionManager';
 import type { DataverseClient, AttributeDefinition, OptionValue, EntityDefinition, Solution } from '../../src/dataverseClient';
+import type { EntityCache } from '../../src/entityCache';
 
 // ── Fixtures / fakes ─────────────────────────────────────────────────────────
 
@@ -25,22 +26,38 @@ function fakeConnection(): D365Connection {
 
 interface FakeConnectionManager {
     cm: ConnectionManager;
-    emitter: vscodeMock.EventEmitter<D365Connection | undefined>;
+    emitter: { fire: (conn: D365Connection | undefined) => void };
     state: { isConnected: boolean; isRestoring: boolean };
     connect: sinon.SinonStub;
 }
 
 function makeConnectionManager(overrides: Partial<{ isConnected: boolean; isRestoring: boolean }> = {}): FakeConnectionManager {
     const state = { isConnected: false, isRestoring: false, ...overrides };
-    const emitter = new vscodeMock.EventEmitter<D365Connection | undefined>();
+    // Mirrors how the real ConnectionManager sets `_connection` before firing -- so code reading
+    // `connectionManager.connection` synchronously inside the fired handler sees the new value.
+    let connection: D365Connection | undefined = state.isConnected ? fakeConnection() : undefined;
+    const rawEmitter = new vscodeMock.EventEmitter<D365Connection | undefined>();
     const connect = sinon.stub().resolves();
     const cm = {
-        onDidChangeConnection: emitter.event,
+        onDidChangeConnection: rawEmitter.event,
         connect,
+        get connection() { return connection; },
         get isConnected() { return state.isConnected; },
         get isRestoring() { return state.isRestoring; },
     } as unknown as ConnectionManager;
+    const emitter = {
+        fire: (conn: D365Connection | undefined) => {
+            connection = conn;
+            rawEmitter.fire(conn);
+        },
+    };
     return { cm, emitter, state, connect };
+}
+
+function makeEntityCache(initial?: EntityDefinition[]): { entityCache: EntityCache; get: sinon.SinonStub; set: sinon.SinonStub } {
+    const get = sinon.stub().returns(initial);
+    const set = sinon.stub().resolves();
+    return { entityCache: { get, set } as unknown as EntityCache, get, set };
 }
 
 interface FakeClient {
@@ -102,7 +119,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.resolves([]);
-            new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
 
             assert.doesNotThrow(() => emitter.fire(fakeConnection()));
             await flush();
@@ -112,7 +129,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('does not reload entities when the connection is cleared (undefined)', async () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
-            new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
 
             emitter.fire(undefined);
             await flush();
@@ -123,7 +140,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
             getEntities.resolves([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -140,7 +157,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('posts connectionState with connected:false and does not load entities when the connection is cleared', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities } = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -157,7 +174,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it('enables scripts, scopes local resource roots, sets non-empty html, and registers a message handler', () => {
             const { cm } = makeConnectionManager();
             const { client } = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             const { view, getHandler } = makeView();
 
             provider.resolveWebviewView(view as any);
@@ -178,7 +195,7 @@ describe('EntityExplorerWebviewProvider', () => {
         function setup(connState: Partial<{ isConnected: boolean; isRestoring: boolean }> = {}) {
             const connMgr = makeConnectionManager(connState);
             const clientFake = makeClient();
-            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, makeEntityCache().entityCache);
             const viewFake = makeView();
             provider.resolveWebviewView(viewFake.view as any);
             return { provider, ...connMgr, ...clientFake, ...viewFake };
@@ -346,7 +363,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
             const showTextDocument = sinon.stub(vscodeMock.window, 'showTextDocument').resolves(undefined);
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(getAttributes.calledWith('account'));
@@ -369,7 +386,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const quickPick = sinon.stub(vscodeMock.window, 'showQuickPick');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(showError.calledWithMatch(/Failed to load fields: fields-down/));
@@ -383,7 +400,7 @@ describe('EntityExplorerWebviewProvider', () => {
             sinon.stub(vscodeMock.window, 'showQuickPick').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeInterface('account', 'Account');
 
             assert.strictEqual(openTextDocument.callCount, 0);
@@ -397,7 +414,7 @@ describe('EntityExplorerWebviewProvider', () => {
             sinon.stub(vscodeMock.window, 'showQuickPick').resolves([]);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeInterface('account', 'Account');
 
             assert.strictEqual(openTextDocument.callCount, 0);
@@ -412,7 +429,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeInterface('account', 'Account');
 
             assert.ok(showError.calledWithMatch(/Failed to load option sets: options-down/));
@@ -430,7 +447,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
             const showTextDocument = sinon.stub(vscodeMock.window, 'showTextDocument').resolves(undefined);
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeEnum('account', 'statuscode', 'Status Reason', 'Status');
 
             assert.ok(getAttributeOptions.calledWith('account', 'statuscode', 'Status'));
@@ -449,7 +466,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const showError = sinon.stub(vscodeMock.window, 'showErrorMessage').resolves(undefined);
             const openTextDocument = sinon.spy(vscodeMock.workspace, 'openTextDocument');
 
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             await provider.makeEnum('account', 'statuscode', 'Status Reason', 'Status');
 
             assert.ok(showError.calledWithMatch(/Failed to load option set: options-down/));
@@ -461,10 +478,10 @@ describe('EntityExplorerWebviewProvider', () => {
 
     describe('refresh', () => {
         it('(re)loads and posts entities the same way as a connected "ready"', async () => {
-            const { cm } = makeConnectionManager();
+            const { cm } = makeConnectionManager({ isConnected: true });
             const { client, getEntities } = makeClient();
             getEntities.resolves([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -476,10 +493,10 @@ describe('EntityExplorerWebviewProvider', () => {
         });
 
         it('posts entitiesError when getEntities rejects', async () => {
-            const { cm } = makeConnectionManager();
+            const { cm } = makeConnectionManager({ isConnected: true });
             const { client, getEntities } = makeClient();
             getEntities.rejects(new Error('down'));
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -487,6 +504,71 @@ describe('EntityExplorerWebviewProvider', () => {
             await flush();
 
             assert.ok(postMessage.calledWith({ type: 'entitiesError', message: 'down' }));
+        });
+    });
+
+    // ── entity cache (cache-first + background refresh) ─────────────────────
+
+    describe('entity cache', () => {
+        it('serves cached entities immediately, then silently replaces them via entitiesRefreshed', async () => {
+            const { cm } = makeConnectionManager({ isConnected: true });
+            const { client, getEntities } = makeClient();
+            const cachedEntities = [{ metadataId: 'cached-1', logicalName: 'contact', schemaName: 'Contact', displayName: 'Contact', isCustom: false }] as EntityDefinition[];
+            const freshEntities = [{ metadataId: 'fresh-1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[];
+            getEntities.resolves(freshEntities);
+            const { entityCache, set } = makeEntityCache(cachedEntities);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage, getHandler } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            await getHandler()({ type: 'ready' });
+
+            // Cached data renders immediately, without ever showing the blocking loading state.
+            assert.ok(postMessage.calledWith({ type: 'entities', data: cachedEntities }));
+            assert.ok(!postMessage.getCalls().some(c => (c.args[0] as any).type === 'entitiesLoading'));
+            assert.ok(postMessage.calledWith({ type: 'entitiesRefreshing' }));
+
+            await flush();
+
+            assert.ok(postMessage.calledWith({ type: 'entitiesRefreshed', data: freshEntities }));
+            assert.ok(set.calledWith('https://contoso.crm.dynamics.com', freshEntities));
+        });
+
+        it('does not post entitiesRefreshed (or an error) when the background refresh fails -- the stale cache stays', async () => {
+            const { cm } = makeConnectionManager({ isConnected: true });
+            const { client, getEntities } = makeClient();
+            const cachedEntities = [{ metadataId: 'cached-1', logicalName: 'contact', schemaName: 'Contact', displayName: 'Contact', isCustom: false }] as EntityDefinition[];
+            getEntities.rejects(new Error('offline'));
+            const { entityCache } = makeEntityCache(cachedEntities);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage, getHandler } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            await getHandler()({ type: 'ready' });
+            await flush();
+
+            assert.ok(!postMessage.getCalls().some(c => (c.args[0] as any).type === 'entitiesRefreshed'));
+            assert.ok(!postMessage.getCalls().some(c => (c.args[0] as any).type === 'entitiesError'));
+        });
+
+        it('refresh() bypasses the cache and does a blocking fetch, updating the cache on success', async () => {
+            const { cm } = makeConnectionManager({ isConnected: true });
+            const { client, getEntities } = makeClient();
+            const cachedEntities = [{ metadataId: 'cached-1', logicalName: 'contact', schemaName: 'Contact', displayName: 'Contact', isCustom: false }] as EntityDefinition[];
+            const freshEntities = [{ metadataId: 'fresh-1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[];
+            getEntities.resolves(freshEntities);
+            const { entityCache, set } = makeEntityCache(cachedEntities);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const { view, postMessage } = makeView();
+            provider.resolveWebviewView(view as any);
+
+            provider.refresh();
+
+            assert.ok(postMessage.calledWith({ type: 'entitiesLoading' }));
+            await flush();
+
+            assert.ok(postMessage.calledWith({ type: 'entities', data: freshEntities }));
+            assert.ok(set.calledWith('https://contoso.crm.dynamics.com', freshEntities));
         });
     });
 });

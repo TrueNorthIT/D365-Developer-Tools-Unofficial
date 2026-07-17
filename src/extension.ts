@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
+import { EntityCache } from './entityCache';
 import { D365StatusBar, showD365Menu } from './statusBar';
 import { McpBridge } from './mcpBridge';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
@@ -19,7 +20,8 @@ import {
 export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
     const client = new DataverseClient(connectionManager);
-    const explorerProvider = new EntityExplorerWebviewProvider(connectionManager, client, context.extensionUri);
+    const entityCache = new EntityCache(context);
+    const explorerProvider = new EntityExplorerWebviewProvider(connectionManager, client, context.extensionUri, entityCache);
     const statusBar = new D365StatusBar(connectionManager);
     context.subscriptions.push(statusBar);
 

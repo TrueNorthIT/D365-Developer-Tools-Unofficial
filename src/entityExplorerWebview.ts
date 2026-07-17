@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from './connectionManager';
 import type { DataverseClient } from './dataverseClient';
+import type { EntityCache } from './entityCache';
 import { generateInterface, generateEnum, toPascalCase, OPTION_SET_TYPES } from './interfaceGenerator';
 
 export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider {
@@ -15,14 +16,17 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         private readonly connectionManager: ConnectionManager,
         private readonly client: DataverseClient,
         private readonly extensionUri: vscode.Uri,
+        private readonly entityCache: EntityCache,
     ) {
         connectionManager.onDidChangeConnection(conn => {
             this.post({ type: 'connectionState', connected: !!conn, restoring: false });
-            if (conn) { this.sendEntities(); }
+            if (conn) { void this.sendEntities(); }
         });
     }
 
-    refresh(): void { this.sendEntities(); }
+    // Forces a fresh fetch from the server, bypassing (but still refreshing) the cache -- bound to
+    // the "D365: Refresh Entities" command.
+    refresh(): void { void this.sendEntities({ forceRefresh: true }); }
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this._view = view;
@@ -80,11 +84,35 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         }
     }
 
-    private async sendEntities(): Promise<void> {
-        this.post({ type: 'entitiesLoading' });
+    // Cache-first by default: a cached list (if any) renders immediately while a fresh fetch runs in
+    // the background and silently replaces it on success (see 'entitiesRefreshed' in protocol.ts) --
+    // this is also what lets entities show up instantly right after an optimistic connection restore,
+    // well before the user has even opened this view. `forceRefresh` (the "Refresh Entities" command)
+    // skips straight to a blocking fetch, same as when there's no cache yet.
+    private async sendEntities(opts: { forceRefresh?: boolean } = {}): Promise<void> {
+        const environmentUrl = this.connectionManager.connection?.environmentUrl;
+        if (!environmentUrl) { return; }
+
         this._iconCache.clear(); // icons may differ across environments; refetch on demand
+        const cached = opts.forceRefresh ? undefined : this.entityCache.get(environmentUrl);
+
+        if (cached) {
+            this.post({ type: 'entities', data: cached });
+            this.post({ type: 'entitiesRefreshing' });
+            try {
+                const fresh = await this.client.getEntities();
+                await this.entityCache.set(environmentUrl, fresh);
+                this.post({ type: 'entitiesRefreshed', data: fresh });
+            } catch {
+                // Stale cache is still showing -- don't replace it with an error toast over a silent refresh.
+            }
+            return;
+        }
+
+        this.post({ type: 'entitiesLoading' });
         try {
             const data = await this.client.getEntities();
+            await this.entityCache.set(environmentUrl, data);
             this.post({ type: 'entities', data });
         } catch (err) {
             this.post({ type: 'entitiesError', message: errMsg(err) });
