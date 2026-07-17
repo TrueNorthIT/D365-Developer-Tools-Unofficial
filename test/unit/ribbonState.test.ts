@@ -359,14 +359,14 @@ describe('ribbonState reducer: removeRuleFromCommand', () => {
 });
 
 describe('ribbonState reducer: reorderControl', () => {
-    it('moves the control before the target and marks only the moved control modified', () => {
+    it('moves the control before the target and marks every repositioned control modified so each gets a fresh Sequence on export', () => {
         const state = stateWithModel(baseModel());
         const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.with.command', beforeControlId: 'btn.no.command' });
 
         const controls = next.model!.tabs[0].groups[0].controls;
         assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
         assert.strictEqual(controls[0].status, 'modified');
-        assert.strictEqual(controls[1].status, 'unchanged');
+        assert.strictEqual(controls[1].status, 'modified');
     });
 
     it('appends to the end when beforeControlId is null', () => {
