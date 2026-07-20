@@ -16,7 +16,13 @@ interface Props {
 export function WebResourceField({ label, value, onChange, placeholder }: Props) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const results = useWebResourceSearch(value);
+
+  // The field's own value carries the real `$webresource:` reference once a suggestion has been
+  // picked (see the button's onClick below) -- but Dataverse web resource names never include that
+  // prefix themselves, so searching on the raw value would stop matching anything the moment it's
+  // there. Strip it just for the search query; the field itself keeps showing the full reference.
+  const searchQuery = value.startsWith('$webresource:') ? value.slice('$webresource:'.length) : value;
+  const results = useWebResourceSearch(searchQuery);
 
   useEffect(() => {
     const onOutsideClick = (e: MouseEvent) => {
@@ -29,7 +35,7 @@ export function WebResourceField({ label, value, onChange, placeholder }: Props)
   }, []);
 
   const suggestions = results.data ?? [];
-  const showSuggestions = open && value.trim().length > 0 && suggestions.length > 0;
+  const showSuggestions = open && searchQuery.trim().length > 0 && suggestions.length > 0;
 
   return (
     <label>
@@ -47,7 +53,11 @@ export function WebResourceField({ label, value, onChange, placeholder }: Props)
           <ul className="web-resource-suggestions">
             {suggestions.map(name => (
               <li key={name}>
-                <button type="button" onClick={() => { onChange(name); setOpen(false); }}>{name}</button>
+                {/* A search result is always a real web resource name, so it's stored with the
+                    explicit `$webresource:` reference Dataverse actually resolves -- see
+                    webResourceRef in ribbonXmlBuilder.ts, which used to only add this at export
+                    time; doing it here too means the field reflects the real value immediately. */}
+                <button type="button" onClick={() => { onChange(`$webresource:${name}`); setOpen(false); }}>{name}</button>
               </li>
             ))}
           </ul>
