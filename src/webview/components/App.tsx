@@ -53,6 +53,7 @@ export function App() {
         solutionFilter={state.solutionFilter}
         onPickSolution={api.showSolutionPicker}
         onClearSolution={api.clearSolutionFilter}
+        refreshing={state.entitiesRefreshing}
       />
       <EntityList
         state={state}

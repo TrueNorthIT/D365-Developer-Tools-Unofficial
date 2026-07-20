@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as sinon from 'sinon';
+import { isMcpConfigured } from '../../src/mcpBridge';
 import type { ConnectionManager } from '../../src/connectionManager';
 
 describe('McpBridge', () => {
@@ -218,5 +219,83 @@ describe('McpBridge', () => {
             assert.strictEqual((bridge as any).server, undefined);
             assert.strictEqual(fs.existsSync(bridge.bridgeFile), false);
         });
+    });
+
+    describe('isRunning / onDidChangeState', () => {
+        it('isRunning is false before start() and true once started', async () => {
+            bridge = new McpBridgeCtor(fakeConnectionManager());
+            assert.strictEqual(bridge.isRunning, false);
+
+            bridge.start();
+            assert.strictEqual(bridge.isRunning, true);
+            await waitForFile(bridge.bridgeFile);
+        });
+
+        it('isRunning is false again after stop()', async () => {
+            bridge = new McpBridgeCtor(fakeConnectionManager());
+            bridge.start();
+            await waitForFile(bridge.bridgeFile);
+
+            bridge.stop();
+
+            assert.strictEqual(bridge.isRunning, false);
+        });
+
+        it('fires onDidChangeState(true) on start() and onDidChangeState(false) on stop()', async () => {
+            bridge = new McpBridgeCtor(fakeConnectionManager());
+            const states: boolean[] = [];
+            bridge.onDidChangeState(s => states.push(s));
+
+            bridge.start();
+            await waitForFile(bridge.bridgeFile);
+            bridge.stop();
+
+            assert.deepStrictEqual(states, [true, false]);
+        });
+
+        it('does not re-fire onDidChangeState for a redundant start() or stop()', async () => {
+            bridge = new McpBridgeCtor(fakeConnectionManager());
+            const states: boolean[] = [];
+            bridge.onDidChangeState(s => states.push(s));
+
+            bridge.start();
+            await waitForFile(bridge.bridgeFile);
+            bridge.start(); // no-op, already running
+            bridge.stop();
+            bridge.stop(); // no-op, already stopped
+
+            assert.deepStrictEqual(states, [true, false]);
+        });
+    });
+});
+
+describe('isMcpConfigured', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-configured-test-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('returns false when .mcp.json does not exist', () => {
+        assert.strictEqual(isMcpConfigured(tmpDir), false);
+    });
+
+    it('returns false when .mcp.json exists but has no d365 server entry', () => {
+        fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { other: {} } }));
+        assert.strictEqual(isMcpConfigured(tmpDir), false);
+    });
+
+    it('returns true when .mcp.json declares a d365 server', () => {
+        fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { d365: { command: 'node', args: [] } } }));
+        assert.strictEqual(isMcpConfigured(tmpDir), true);
+    });
+
+    it('returns false when .mcp.json is not valid JSON', () => {
+        fs.writeFileSync(path.join(tmpDir, '.mcp.json'), '{ not valid json');
+        assert.strictEqual(isMcpConfigured(tmpDir), false);
     });
 });

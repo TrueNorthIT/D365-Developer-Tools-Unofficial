@@ -212,6 +212,155 @@ describe('ConnectionManager', () => {
             assert.strictEqual(cm.isConnected, false);
             assert.ok(disposeSpy.calledOnce);
         });
+
+        // ── Optimistic restore (a cached WhoAmI is present from a prior successful connect) ──────
+
+        const flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+
+        it('optimistically restores from a cached WhoAmI immediately, then re-verifies in the background', async () => {
+            const ctx = makeContext();
+            const cachedWhoAmI = { UserId: 'cached-user', BusinessUnitId: 'bu-1', OrganizationId: 'org-1' };
+            await ctx.workspaceState.update('d365.connection', {
+                environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', authMode: 'user', whoAmI: cachedWhoAmI,
+            });
+
+            const getTokenStub = sinon.stub(UserAuthProvider.prototype, 'getAccessToken').resolves('token-xyz');
+
+            const cm = new ConnectionManager(ctx);
+            const events: Array<D365Connection | undefined> = [];
+            cm.onDidChangeConnection(c => events.push(c));
+
+            // For user auth there's no `await` before the optimistic fire, so tryRestoreConnection()
+            // runs synchronously up through firing the cached connection -- calling it (without
+            // awaiting yet) lets us observe that state before any of the background verification's
+            // own awaits have had a chance to settle.
+            const restorePromise = cm.tryRestoreConnection();
+
+            assert.strictEqual(cm.isConnected, true);
+            assert.strictEqual(cm.isRestoring, false);
+            assert.deepStrictEqual(cm.connection?.whoAmI, cachedWhoAmI);
+            assert.strictEqual(events.length, 1);
+
+            await restorePromise;
+            await flush();
+
+            assert.strictEqual(cm.isConnected, true);
+            assert.deepStrictEqual(cm.connection?.whoAmI, WHOAMI_OK, 'replaced by the real WhoAmI once background verification completes');
+            assert.strictEqual(events.length, 2, 'a second event fires once the background verification confirms the connection');
+            assert.deepStrictEqual(
+                ctx.workspaceState.get('d365.connection'),
+                { environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', clientId: undefined, authMode: 'user', whoAmI: WHOAMI_OK },
+            );
+        });
+
+        it('rolls back to disconnected and offers reconnect when the background verification fails after an optimistic restore', async () => {
+            const ctx = makeContext();
+            const cachedWhoAmI = { UserId: 'cached-user', BusinessUnitId: 'bu-1', OrganizationId: 'org-1' };
+            await ctx.workspaceState.update('d365.connection', {
+                environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', authMode: 'user', whoAmI: cachedWhoAmI,
+            });
+
+            sinon.stub(UserAuthProvider.prototype, 'getAccessToken').rejects(new Error('session expired'));
+            const disposeSpy = sinon.stub(UserAuthProvider.prototype, 'dispose');
+            const infoStub = sinon.stub(vscodeMock.window, 'showInformationMessage').resolves(undefined);
+
+            const cm = new ConnectionManager(ctx);
+            const events: Array<D365Connection | undefined> = [];
+            cm.onDidChangeConnection(c => events.push(c));
+
+            const restorePromise = cm.tryRestoreConnection();
+
+            assert.strictEqual(cm.isConnected, true, 'still optimistically connected synchronously, before the background verification runs');
+
+            await restorePromise;
+            await flush();
+
+            assert.strictEqual(cm.isConnected, false, 'rolled back once the background verification fails');
+            assert.strictEqual(events.length, 2);
+            assert.strictEqual(events[1], undefined);
+            assert.ok(disposeSpy.calledOnce);
+            assert.ok(infoStub.calledWithMatch(/Previously connected to/));
+        });
+
+        it('optimistically restores a clientCredentials connection from a cached WhoAmI, verifying in the background', async () => {
+            const ctx = makeContext();
+            const cachedWhoAmI = { UserId: 'cached-user', BusinessUnitId: 'bu-1', OrganizationId: 'org-1' };
+            await ctx.workspaceState.update('d365.connection', {
+                environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', clientId: 'client-1', authMode: 'clientCredentials', whoAmI: cachedWhoAmI,
+            });
+            await ctx.secrets.store('d365.clientSecret.https://contoso.crm.dynamics.com.client-1', 'super-secret');
+            sinon.stub(ClientCredentialsProvider.prototype, 'getAccessToken').resolves('token-abc');
+
+            const cm = new ConnectionManager(ctx);
+            const events: Array<D365Connection | undefined> = [];
+            cm.onDidChangeConnection(c => events.push(c));
+
+            // Unlike user auth, clientCredentials mode does an `await` (the secret lookup) before it
+            // can even reach the optimistic-fire branch, so the two phases can't be reliably observed
+            // as separate synchronous snapshots here -- just assert the end-to-end result.
+            await cm.tryRestoreConnection();
+            await flush();
+
+            assert.strictEqual(cm.isConnected, true);
+            assert.deepStrictEqual(cm.connection?.whoAmI, WHOAMI_OK);
+            assert.strictEqual(events.length, 2, 'one optimistic fire plus one background-verified fire');
+        });
+    });
+
+    describe('default solution', () => {
+        function connectedContext(): { ctx: ReturnType<typeof makeContext>; cm: ConnectionManager } {
+            const ctx = makeContext();
+            const cm = new ConnectionManager(ctx);
+            (cm as unknown as { _connection: D365Connection })._connection = {
+                environmentUrl: 'https://contoso.crm.dynamics.com', tenantId: 't1', authMode: 'user',
+            };
+            return { ctx, cm };
+        }
+
+        it('returns undefined when nothing is connected', () => {
+            const cm = new ConnectionManager(makeContext());
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('returns undefined when no default has been set for the current environment', () => {
+            const { cm } = connectedContext();
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('persists and retrieves a default solution for the current environment', async () => {
+            const { cm } = connectedContext();
+            const solution = { solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' };
+
+            await cm.setDefaultSolution(solution);
+
+            assert.deepStrictEqual(cm.getDefaultSolution(), solution);
+        });
+
+        it('clears the default solution for the current environment when set to undefined', async () => {
+            const { cm } = connectedContext();
+            await cm.setDefaultSolution({ solutionId: 's1', uniqueName: 'sol1', friendlyName: 'Solution One' });
+
+            await cm.setDefaultSolution(undefined);
+
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+        });
+
+        it('keeps default solutions for different environments independent', async () => {
+            const ctx = makeContext();
+            const cm = new ConnectionManager(ctx);
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://a.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            await cm.setDefaultSolution({ solutionId: 's-a', uniqueName: 'sol-a', friendlyName: 'Solution A' });
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://b.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            assert.strictEqual(cm.getDefaultSolution(), undefined);
+            await cm.setDefaultSolution({ solutionId: 's-b', uniqueName: 'sol-b', friendlyName: 'Solution B' });
+
+            assert.deepStrictEqual(cm.getDefaultSolution(), { solutionId: 's-b', uniqueName: 'sol-b', friendlyName: 'Solution B' });
+
+            (cm as unknown as { _connection: D365Connection })._connection = { environmentUrl: 'https://a.crm.dynamics.com', tenantId: 't1', authMode: 'user' };
+            assert.deepStrictEqual(cm.getDefaultSolution(), { solutionId: 's-a', uniqueName: 'sol-a', friendlyName: 'Solution A' });
+        });
     });
 
     describe('connect', () => {
