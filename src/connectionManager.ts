@@ -94,7 +94,7 @@ export class ConnectionManager {
             }
             authProvider = new ClientCredentialsProvider(stored.environmentUrl, stored.tenantId, stored.clientId, secret);
         } else {
-            authProvider = new UserAuthProvider(stored.environmentUrl);
+            authProvider = new UserAuthProvider(stored.environmentUrl, stored.tenantId);
         }
 
         if (stored.whoAmI) {
@@ -284,7 +284,7 @@ export class ConnectionManager {
 
             authProvider = new ClientCredentialsProvider(environmentUrl, tenantId, clientId, clientSecret);
         } else {
-            authProvider = new UserAuthProvider(environmentUrl);
+            authProvider = new UserAuthProvider(environmentUrl, tenantId);
         }
 
         await vscode.window.withProgress(
