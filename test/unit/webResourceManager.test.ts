@@ -174,7 +174,7 @@ describe('webResourceManager', () => {
         let tmpDir: string;
         let webResourcesDir: string;
         let workspaceFolder: { uri: vscodeMock.Uri; name: string; index: number };
-        let connected: { isConnected: boolean };
+        let connected: { isConnected: boolean; getDefaultSolution: sinon.SinonStub };
         let client: {
             getWebResourceIdByName: sinon.SinonStub;
             updateWebResourceContent: sinon.SinonStub;
@@ -191,7 +191,7 @@ describe('webResourceManager', () => {
             workspaceFolder = { uri: vscodeMock.Uri.file(tmpDir), name: 'ws', index: 0 };
             vscodeMock.workspace.workspaceFolders = [workspaceFolder];
             vscodeMock.__setConfig(CONFIG_SECTION, { rootFolder: 'webresources', namePrefix: '' });
-            connected = { isConnected: true };
+            connected = { isConnected: true, getDefaultSolution: sinon.stub().returns(undefined) };
             client = {
                 getWebResourceIdByName: sinon.stub(),
                 updateWebResourceContent: sinon.stub().resolves(undefined),
@@ -291,16 +291,26 @@ describe('webResourceManager', () => {
             sinon.stub(vscodeMock.window, 'showInputBox').resolves('New Script');
             const solutionObj: Solution = { solutionId: 's1', uniqueName: 'uniq1', friendlyName: 'Friendly 1' };
             client.getSolutions.resolves([solutionObj]);
-            const quickPickStub = sinon.stub(vscodeMock.window, 'showQuickPick');
-            quickPickStub.onCall(0).resolves({ type: 3 });
-            quickPickStub.onCall(1).resolves({ solution: solutionObj });
+            sinon.stub(vscodeMock.window, 'showQuickPick').resolves({ type: 3 });
+            // pickSolution uses createQuickPick (not showQuickPick) so it can pre-highlight a default.
+            const quickPick = new vscodeMock.QuickPickMock<{ solution: Solution | null }>();
+            sinon.stub(vscodeMock.window, 'createQuickPick').returns(quickPick as any);
             client.createWebResource.resolves('new-id-1');
 
-            await publishWebResources(
+            const publishPromise = publishWebResources(
                 [fileUri],
                 connected as unknown as ConnectionManager,
                 client as unknown as DataverseClient,
             );
+            // Let the chain (real fs.readFile -> getWebResourceIdByName -> warning -> input -> type
+            // pick -> getSolutions) run until pickSolution's QuickPick is shown and waiting on
+            // selection -- fs.readFile resolves via real I/O, so this can take more than one tick.
+            while (quickPick.items.length === 0) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
+            const solutionItem = quickPick.items.find(i => i.solution?.solutionId === 's1')!;
+            quickPick.triggerAccept([solutionItem]);
+            await publishPromise;
 
             assert.ok(client.createWebResource.calledOnce);
             const createArgs = client.createWebResource.firstCall.args[0];

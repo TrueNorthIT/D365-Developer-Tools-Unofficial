@@ -27,10 +27,26 @@ export interface StoredConnection {
     authMode: AuthMode;
 }
 
+// What's actually persisted under WORKSPACE_STATE_KEY -- a StoredConnection plus the last-known
+// WhoAmI, so tryRestoreConnection can restore optimistically (see below) instead of always
+// blocking on a live token + WhoAmI round trip before the UI can show "connected".
+interface CachedConnection extends StoredConnection {
+    whoAmI?: WhoAmIResponse;
+}
+
 const SECRET_KEY_PREFIX  = 'd365.clientSecret';
 const WORKSPACE_STATE_KEY = 'd365.connection';
 const RECENTS_STATE_KEY = 'd365.recentEnvironments';
+const DEFAULT_SOLUTION_STATE_KEY = 'd365.defaultSolutionByEnvironment';
 const MAX_RECENTS = 5;
+
+// Structurally identical to dataverseClient.ts's Solution -- kept as its own type here to avoid a
+// circular import (dataverseClient.ts already imports ConnectionManager).
+export interface DefaultSolutionRef {
+    solutionId: string;
+    uniqueName: string;
+    friendlyName: string;
+}
 
 export class ConnectionManager {
     private _connection: D365Connection | undefined;
@@ -56,7 +72,7 @@ export class ConnectionManager {
     // ── Restore saved connection on workspace open ──────────────────────────
 
     async tryRestoreConnection(): Promise<void> {
-        const stored = this.context.workspaceState.get<StoredConnection>(WORKSPACE_STATE_KEY);
+        const stored = this.context.workspaceState.get<CachedConnection>(WORKSPACE_STATE_KEY);
         if (!stored) { return; }
         this._isRestoring = true;
 
@@ -78,33 +94,62 @@ export class ConnectionManager {
             }
             authProvider = new ClientCredentialsProvider(stored.environmentUrl, stored.tenantId, stored.clientId, secret);
         } else {
-            // silent: true — does not prompt; throws/returns undefined if no session is ready
-            const userProvider = new UserAuthProvider(stored.environmentUrl, stored.tenantId);
+            authProvider = new UserAuthProvider(stored.environmentUrl, stored.tenantId);
+        }
+
+        if (stored.whoAmI) {
+            // Optimistic restore: trust the last-known connection immediately so the UI (status bar,
+            // entity explorer) doesn't block on a network round trip on every reload -- then verify
+            // for real in the background and roll back to "disconnected" + a reconnect prompt if that
+            // verification turns out to fail (stale/expired session, revoked app registration, etc).
+            this._authProvider = authProvider;
+            this._connection   = { ...toStoredConnection(stored), whoAmI: stored.whoAmI };
+            this._isRestoring  = false;
+            this._onDidChangeConnection.fire(this._connection);
+            void this.verifyRestoredConnection(authProvider, stored);
+            return;
+        }
+
+        await this.verifyRestoredConnection(authProvider, stored);
+    }
+
+    // Confirms a restored auth provider can actually still get a token and reach Dataverse. Used both
+    // to block the very first restore (no cached WhoAmI yet to restore optimistically from) and to
+    // silently re-verify an optimistically-restored connection afterwards -- same steps either way.
+    private async verifyRestoredConnection(authProvider: AuthProvider, stored: CachedConnection): Promise<void> {
+        if (authProvider instanceof UserAuthProvider) {
+            // silent: true — does not prompt; throws/returns undefined if no session is ready. Checked
+            // separately (and always silently, even for the background-verify path) so a stale restore
+            // never pops the account picker unprompted.
             try {
-                await userProvider.getAccessToken(true);
+                await authProvider.getAccessToken(true);
             } catch {
-                userProvider.dispose();
-                this._isRestoring = false;
-                this._onDidChangeConnection.fire(undefined);
-                this.offerReconnect(stored.environmentUrl);
+                authProvider.dispose();
+                this.failRestoredConnection(stored.environmentUrl);
                 return;
             }
-            authProvider = userProvider;
         }
 
         try {
             const token  = await authProvider.getAccessToken();
             const whoAmI = await this.callWhoAmI(stored.environmentUrl, token);
             this._authProvider = authProvider;
-            this._connection   = { ...stored, whoAmI };
+            this._connection   = { ...toStoredConnection(stored), whoAmI };
             this._isRestoring  = false;
             this._onDidChangeConnection.fire(this._connection);
+            await this.context.workspaceState.update(WORKSPACE_STATE_KEY, { ...toStoredConnection(stored), whoAmI } satisfies CachedConnection);
         } catch {
             authProvider.dispose();
-            this._isRestoring = false;
-            this._onDidChangeConnection.fire(undefined);
-            this.offerReconnect(stored.environmentUrl);
+            this.failRestoredConnection(stored.environmentUrl);
         }
+    }
+
+    private failRestoredConnection(environmentUrl: string): void {
+        this._authProvider = undefined;
+        this._connection   = undefined;
+        this._isRestoring  = false;
+        this._onDidChangeConnection.fire(undefined);
+        this.offerReconnect(environmentUrl);
     }
 
     private offerReconnect(environmentUrl: string): void {
@@ -198,6 +243,25 @@ export class ConnectionManager {
         return this.context.globalState.get<StoredConnection[]>(RECENTS_STATE_KEY, []);
     }
 
+    // The default solution is remembered per-environment (not per-workspace-connection) so switching
+    // between recent environments doesn't bleed one org's default solution into another's.
+    getDefaultSolution(): DefaultSolutionRef | undefined {
+        if (!this._connection) { return undefined; }
+        const byEnvironment = this.context.workspaceState.get<Record<string, DefaultSolutionRef>>(DEFAULT_SOLUTION_STATE_KEY, {});
+        return byEnvironment[this._connection.environmentUrl];
+    }
+
+    async setDefaultSolution(solution: DefaultSolutionRef | undefined): Promise<void> {
+        if (!this._connection) { return; }
+        const byEnvironment = { ...this.context.workspaceState.get<Record<string, DefaultSolutionRef>>(DEFAULT_SOLUTION_STATE_KEY, {}) };
+        if (solution) {
+            byEnvironment[this._connection.environmentUrl] = solution;
+        } else {
+            delete byEnvironment[this._connection.environmentUrl];
+        }
+        await this.context.workspaceState.update(DEFAULT_SOLUTION_STATE_KEY, byEnvironment);
+    }
+
     private async rememberEnvironment(stored: StoredConnection): Promise<void> {
         const isSame = (a: StoredConnection, b: StoredConnection) =>
             a.environmentUrl === b.environmentUrl && a.authMode === b.authMode && a.clientId === b.clientId;
@@ -258,8 +322,8 @@ export class ConnectionManager {
                 this._onDidChangeConnection.fire(this._connection);
 
                 await this.context.workspaceState.update(WORKSPACE_STATE_KEY, {
-                    environmentUrl, tenantId, clientId, authMode,
-                } satisfies StoredConnection);
+                    environmentUrl, tenantId, clientId, authMode, whoAmI,
+                } satisfies CachedConnection);
                 await this.rememberEnvironment({ environmentUrl, tenantId, clientId, authMode });
 
                 vscode.window.showInformationMessage(`Connected to ${environmentUrl}`);
@@ -326,6 +390,10 @@ export class ConnectionManager {
         }
         return response.json() as Promise<WhoAmIResponse>;
     }
+}
+
+function toStoredConnection(cached: CachedConnection): StoredConnection {
+    return { environmentUrl: cached.environmentUrl, tenantId: cached.tenantId, clientId: cached.clientId, authMode: cached.authMode };
 }
 
 function normalizeUrl(input: string): string {

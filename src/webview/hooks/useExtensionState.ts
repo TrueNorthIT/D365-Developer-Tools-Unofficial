@@ -16,6 +16,9 @@ export interface ExtensionState {
   connected: boolean;
   restoring: boolean;
   entitiesLoading: boolean;
+  // A cached entity list is already showing and a background refetch is in flight -- distinct from
+  // entitiesLoading, which blanks the list; this just drives a small non-blocking indicator.
+  entitiesRefreshing: boolean;
   entities: EntityInfo[];
   entitiesError: string | null;
   expanded: Set<string>;
@@ -26,6 +29,7 @@ const initialState: ExtensionState = {
   connected: false,
   restoring: false,
   entitiesLoading: false,
+  entitiesRefreshing: false,
   entities: [],
   entitiesError: null,
   expanded: new Set(),
@@ -44,7 +48,7 @@ function reducer(state: ExtensionState, action: Action): ExtensionState {
       return { ...state, connected: action.connected, restoring: action.restoring };
 
     case 'entitiesLoading':
-      return { ...state, entitiesLoading: true, entitiesError: null };
+      return { ...state, entitiesLoading: true, entitiesRefreshing: false, entitiesError: null };
 
     case 'entities':
       // Fresh entity set (new environment / refresh): collapse everything.
@@ -57,7 +61,15 @@ function reducer(state: ExtensionState, action: Action): ExtensionState {
       };
 
     case 'entitiesError':
-      return { ...state, entitiesLoading: false, entitiesError: action.message };
+      return { ...state, entitiesLoading: false, entitiesRefreshing: false, entitiesError: action.message };
+
+    case 'entitiesRefreshing':
+      return { ...state, entitiesRefreshing: true };
+
+    case 'entitiesRefreshed':
+      // Unlike 'entities', preserve expand/collapse -- the user may already be interacting with the
+      // tree the cached 'entities' message rendered while this background refetch was in flight.
+      return { ...state, entities: action.data, entitiesRefreshing: false, entitiesError: null };
 
     case 'solutionFilter':
       return { ...state, solutionFilter: { name: action.name, entityIds: new Set(action.entityIds) } };
@@ -122,7 +134,10 @@ export function useExtensionState(): ExtensionApi {
 
   const connect = useCallback(() => post({ type: 'connect' }), []);
   const showSolutionPicker = useCallback(() => post({ type: 'showSolutionPicker' }), []);
-  const clearSolutionFilter = useCallback(() => dispatch({ type: 'local/clearSolution' }), []);
+  const clearSolutionFilter = useCallback(() => {
+    dispatch({ type: 'local/clearSolution' });
+    post({ type: 'clearSolutionFilter' });
+  }, []);
 
   const toggleEntity = useCallback((logicalName: string) => {
     const expanded = stateRef.current.expanded.has(logicalName);

@@ -4,6 +4,8 @@ import * as vscodeMock from '../mocks/vscode';
 import { UserAuthProvider } from '../../src/auth/userAuthProvider';
 
 const ENV_URL = 'https://contoso.crm.dynamics.com';
+const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+const EXPECTED_SCOPES = [`${ENV_URL}/.default`, `VSCODE_TENANT:${TENANT_ID}`];
 
 describe('UserAuthProvider', () => {
     afterEach(() => {
@@ -16,14 +18,14 @@ describe('UserAuthProvider', () => {
             const stub = sinon.stub(vscodeMock.authentication, 'getSession')
                 .resolves({ accessToken: 'token-1' } as any);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
             const token = await provider.getAccessToken();
 
             assert.strictEqual(token, 'token-1');
             sinon.assert.calledOnceWithExactly(
                 stub,
                 'microsoft',
-                [`${ENV_URL}/.default`],
+                EXPECTED_SCOPES,
                 { createIfNone: true },
             );
         });
@@ -32,21 +34,21 @@ describe('UserAuthProvider', () => {
             const stub = sinon.stub(vscodeMock.authentication, 'getSession')
                 .resolves({ accessToken: 'token-2' } as any);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
             const token = await provider.getAccessToken(true);
 
             assert.strictEqual(token, 'token-2');
             sinon.assert.calledOnce(stub);
             const [service, scopes, options] = stub.getCall(0).args;
             assert.strictEqual(service, 'microsoft');
-            assert.deepStrictEqual(scopes, [`${ENV_URL}/.default`]);
+            assert.deepStrictEqual(scopes, EXPECTED_SCOPES);
             assert.deepStrictEqual(options, { silent: true });
         });
 
         it('throws when getSession resolves to undefined (default, non-silent)', async () => {
             sinon.stub(vscodeMock.authentication, 'getSession').resolves(undefined);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
 
             await assert.rejects(
                 () => provider.getAccessToken(),
@@ -57,7 +59,7 @@ describe('UserAuthProvider', () => {
         it('throws when getSession resolves to undefined (silent)', async () => {
             sinon.stub(vscodeMock.authentication, 'getSession').resolves(undefined);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
 
             await assert.rejects(
                 () => provider.getAccessToken(true),
@@ -71,14 +73,14 @@ describe('UserAuthProvider', () => {
             const stub = sinon.stub(vscodeMock.authentication, 'getSession')
                 .resolves({ accessToken: 'token-3' } as any);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
             const token = await provider.selectAccount();
 
             assert.strictEqual(token, 'token-3');
             sinon.assert.calledOnceWithExactly(
                 stub,
                 'microsoft',
-                [`${ENV_URL}/.default`],
+                EXPECTED_SCOPES,
                 { createIfNone: true, clearSessionPreference: true },
             );
         });
@@ -86,7 +88,7 @@ describe('UserAuthProvider', () => {
         it('throws the same error message when no session is available', async () => {
             sinon.stub(vscodeMock.authentication, 'getSession').resolves(undefined);
 
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
 
             await assert.rejects(
                 () => provider.selectAccount(),
@@ -97,7 +99,7 @@ describe('UserAuthProvider', () => {
 
     describe('dispose', () => {
         it('does not throw', () => {
-            const provider = new UserAuthProvider(ENV_URL);
+            const provider = new UserAuthProvider(ENV_URL, TENANT_ID);
             assert.doesNotThrow(() => provider.dispose());
         });
     });
