@@ -79,7 +79,7 @@ export class ConnectionManager {
             authProvider = new ClientCredentialsProvider(stored.environmentUrl, stored.tenantId, stored.clientId, secret);
         } else {
             // silent: true — does not prompt; throws/returns undefined if no session is ready
-            const userProvider = new UserAuthProvider(stored.environmentUrl);
+            const userProvider = new UserAuthProvider(stored.environmentUrl, stored.tenantId);
             try {
                 await userProvider.getAccessToken(true);
             } catch {
@@ -220,7 +220,7 @@ export class ConnectionManager {
 
             authProvider = new ClientCredentialsProvider(environmentUrl, tenantId, clientId, clientSecret);
         } else {
-            authProvider = new UserAuthProvider(environmentUrl);
+            authProvider = new UserAuthProvider(environmentUrl, tenantId);
         }
 
         await vscode.window.withProgress(
