@@ -384,12 +384,19 @@ export class RibbonEditorPanel {
             );
         }
 
-        vscode.window.showInformationMessage(
-            result.warningText
-                ? `D365: Ribbon changes published to '${entityLabel}', with a non-fatal warning from Dataverse: ${result.warningText}`
-                : `D365: Ribbon changes published to '${entityLabel}'.`,
-        );
-        await this.loadRibbon();
+        // Deliberately NOT an automatic reload: this session's edits just got serialized through
+        // $LocLabels: references (see ribbonXmlBuilder.ts), and Dataverse's ribbon metadata cache
+        // doesn't reliably resolve a brand-new LocLabel back to real text immediately after import --
+        // reloading right away could show a freshly-published label as an unresolved reference (with
+        // NodeEditor's "showing a guess" hint) even though the publish itself succeeded. Offering a
+        // manual reload button instead lets the user pick the moment (their own "Reload" toolbar
+        // action does the same thing), by which point the cache has more likely caught up.
+        const message = result.warningText
+            ? `D365: Ribbon changes published to '${entityLabel}', with a non-fatal warning from Dataverse: ${result.warningText}`
+            : `D365: Ribbon changes published to '${entityLabel}'.`;
+        vscode.window.showInformationMessage(message, 'Reload').then(choice => {
+            if (choice === 'Reload') { void this.loadRibbon(); }
+        });
     }
 
     // RegenerateRibbonMetadataForAllEntities (see dataverseClient.ts) always regenerates for the
