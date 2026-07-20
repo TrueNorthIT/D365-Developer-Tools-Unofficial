@@ -215,7 +215,7 @@ describe('EntityExplorerWebviewProvider', () => {
         function setup(connState: Partial<{ isConnected: boolean; isRestoring: boolean }> = {}) {
             const connMgr = makeConnectionManager(connState);
             const clientFake = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache, NOOP_OPEN_RIBBON_EDITOR);
+            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, makeEntityCache().entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const viewFake = makeView();
             provider.resolveWebviewView(viewFake.view as any);
             return { provider, ...connMgr, ...clientFake, ...viewFake };
@@ -283,7 +283,7 @@ describe('EntityExplorerWebviewProvider', () => {
             getEntities.returns(new Promise<EntityDefinition[]>(resolve => { resolveEntities = resolve; }));
 
             const { entityCache } = makeEntityCache([{ metadataId: '1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage, getHandler } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -404,7 +404,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const connMgr = makeConnectionManager();
             const clientFake = makeClient();
             const openRibbonEditor = sinon.stub();
-            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, openRibbonEditor);
+            const provider = new EntityExplorerWebviewProvider(connMgr.cm, clientFake.client, EXT_URI, makeEntityCache().entityCache, openRibbonEditor);
             const viewFake = makeView();
             provider.resolveWebviewView(viewFake.view as any);
 
@@ -606,7 +606,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const freshEntities = [{ metadataId: 'fresh-1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[];
             getEntities.resolves(freshEntities);
             const { entityCache, set } = makeEntityCache(cachedEntities);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage, getHandler } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -629,7 +629,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const cachedEntities = [{ metadataId: 'cached-1', logicalName: 'contact', schemaName: 'Contact', displayName: 'Contact', isCustom: false }] as EntityDefinition[];
             getEntities.rejects(new Error('offline'));
             const { entityCache } = makeEntityCache(cachedEntities);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage, getHandler } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -647,7 +647,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const freshEntities = [{ metadataId: 'fresh-1', logicalName: 'account', schemaName: 'Account', displayName: 'Account', isCustom: false }] as EntityDefinition[];
             getEntities.resolves(freshEntities);
             const { entityCache, set } = makeEntityCache(cachedEntities);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -675,7 +675,7 @@ describe('EntityExplorerWebviewProvider', () => {
             getEntities.resolves([]);
             getSolutionEntityIds.resolves(new Set(['e1']));
             const { entityCache, setSolutionEntityIds } = makeEntityCache();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -696,7 +696,7 @@ describe('EntityExplorerWebviewProvider', () => {
             getSolutionEntityIds.resolves(new Set(['fresh-1']));
             const { entityCache, getSolutionEntityIds: getCachedIds, setSolutionEntityIds } = makeEntityCache();
             getCachedIds.returns(['cached-1']);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -719,7 +719,7 @@ describe('EntityExplorerWebviewProvider', () => {
             getSolutionEntityIds.rejects(new Error('offline'));
             const { entityCache, getSolutionEntityIds: getCachedIds, setSolutionEntityIds } = makeEntityCache();
             getCachedIds.returns(['cached-1']);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, postMessage } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -736,7 +736,7 @@ describe('EntityExplorerWebviewProvider', () => {
             const { cm, emitter } = makeConnectionManager();
             const { client, getEntities, getSolutionEntityIds } = makeClient();
             getEntities.resolves([]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -753,7 +753,7 @@ describe('EntityExplorerWebviewProvider', () => {
             getSolutions.resolves([solution]);
             getSolutionEntityIds.resolves(new Set(['e9']));
             sinon.stub(vscodeMock.window, 'showQuickPick').callsFake(async (items: any) => items[0]);
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, getHandler } = makeView();
             provider.resolveWebviewView(view as any);
 
@@ -765,7 +765,7 @@ describe('EntityExplorerWebviewProvider', () => {
         it("'clearSolutionFilter' clears the persisted default solution", async () => {
             const { cm, setDefaultSolution } = makeConnectionManager({ isConnected: true });
             const { client } = makeClient();
-            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache);
+            const provider = new EntityExplorerWebviewProvider(cm, client, EXT_URI, makeEntityCache().entityCache, NOOP_OPEN_RIBBON_EDITOR);
             const { view, getHandler } = makeView();
             provider.resolveWebviewView(view as any);
 
