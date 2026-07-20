@@ -38,14 +38,34 @@ export function iconKey(e: EntityInfo): string | null {
   return null;
 }
 
-// Decode base64 web-resource content to SVG text and strip the XML prolog / DOCTYPE so it
-// inlines cleanly. Script execution inside it is blocked by the page CSP.
-export function decodeSvg(b64: string): string {
+export type IconContent =
+  | { kind: 'svg'; markup: string }
+  | { kind: 'raster'; dataUri: string };
+
+// IconVectorName nominally points at an SVG web resource, but nothing stops a table from having
+// a raster one configured there instead -- sniffs the decoded bytes' magic number rather than
+// trusting that, since blindly UTF-8-decoding a PNG/JPEG/GIF and inlining it as "SVG markup"
+// dumps the raw binary as garbled text into the DOM.
+function sniffRasterMimeType(bytes: Uint8Array): string | undefined {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) { return 'image/png'; }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) { return 'image/jpeg'; }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) { return 'image/gif'; }
+  return undefined;
+}
+
+// Decode base64 web-resource content, detecting whether it's actually a raster image (rendered as
+// a data: URI <img>) or real SVG/XML text (stripped of its prolog / DOCTYPE so it inlines cleanly
+// -- script execution inside it is blocked by the page CSP either way).
+export function decodeIconContent(b64: string): IconContent {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+
+  const rasterMimeType = sniffRasterMimeType(bytes);
+  if (rasterMimeType) { return { kind: 'raster', dataUri: `data:${rasterMimeType};base64,${b64}` }; }
+
   const svg = new TextDecoder('utf-8').decode(bytes);
-  return svg.replace(/<\?xml[\s\S]*?\?>/i, '').replace(/<!DOCTYPE[\s\S]*?>/i, '').trim();
+  return { kind: 'svg', markup: svg.replace(/<\?xml[\s\S]*?\?>/i, '').replace(/<!DOCTYPE[\s\S]*?>/i, '').trim() };
 }
 
 // Inline table glyph shown when a real icon isn't available (or hasn't loaded yet).

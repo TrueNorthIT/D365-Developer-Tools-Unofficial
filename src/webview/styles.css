@@ -112,7 +112,7 @@ input[type=text]::placeholder { color: var(--vscode-input-placeholderForeground)
   height: 14px;
   flex-shrink: 0;
 }
-.entity-icon-slot svg { width: 14px; height: 14px; display: block; }
+.entity-icon-slot svg, .entity-icon-slot img { width: 14px; height: 14px; display: block; object-fit: contain; }
 
 /* Generic fallback glyph draws with currentColor: black on light themes, white on dark,
    so it sits inline with the (inverted) real icons. */

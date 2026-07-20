@@ -28,7 +28,7 @@ export function EntityRow({ entity, isExpanded, onToggle, onEntityContextMenu, o
         onClick={() => onToggle(entity.logicalName)}
         onContextMenu={handleContextMenu}
       >
-        <EntityIcon svg={icon.data ?? undefined} />
+        <EntityIcon content={icon.data} />
         <span className="entity-name">{entity.displayName || entity.logicalName}</span>
         <span className="entity-lname">{entity.logicalName}</span>
       </div>

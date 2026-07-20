@@ -1,4 +1,5 @@
 import type { SolutionFilter } from '../hooks/useExtensionState';
+import { Spinner } from './Spinner';
 
 interface Props {
   search: string;
@@ -6,9 +7,10 @@ interface Props {
   solutionFilter: SolutionFilter | null;
   onPickSolution: () => void;
   onClearSolution: () => void;
+  refreshing: boolean;
 }
 
-export function Toolbar({ search, onSearchChange, solutionFilter, onPickSolution, onClearSolution }: Props) {
+export function Toolbar({ search, onSearchChange, solutionFilter, onPickSolution, onClearSolution, refreshing }: Props) {
   return (
     <div className="toolbar">
       <div className="search-wrap">
@@ -19,6 +21,7 @@ export function Toolbar({ search, onSearchChange, solutionFilter, onPickSolution
           value={search}
           onChange={e => onSearchChange(e.target.value)}
         />
+        {refreshing && <span title="Refreshing entities from the server…"><Spinner /></span>}
       </div>
 
       <div className="solution-row">

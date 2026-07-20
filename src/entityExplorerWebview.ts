@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import type { ConnectionManager } from './connectionManager';
-import type { DataverseClient } from './dataverseClient';
+import type { ConnectionManager, DefaultSolutionRef } from './connectionManager';
+import type { DataverseClient, Solution } from './dataverseClient';
+import type { EntityCache } from './entityCache';
 import { generateInterface, generateEnum, toPascalCase, OPTION_SET_TYPES } from './interfaceGenerator';
 
 export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider {
@@ -15,14 +16,21 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         private readonly connectionManager: ConnectionManager,
         private readonly client: DataverseClient,
         private readonly extensionUri: vscode.Uri,
+        private readonly entityCache: EntityCache,
     ) {
         connectionManager.onDidChangeConnection(conn => {
             this.post({ type: 'connectionState', connected: !!conn, restoring: false });
-            if (conn) { this.sendEntities(); }
+            if (conn) {
+                void this.sendEntities();
+                const defaultSolution = connectionManager.getDefaultSolution();
+                if (defaultSolution) { void this.applySolutionFilter(defaultSolution); }
+            }
         });
     }
 
-    refresh(): void { this.sendEntities(); }
+    // Forces a fresh fetch from the server, bypassing (but still refreshing) the cache -- bound to
+    // the "D365: Refresh Entities" command.
+    refresh(): void { void this.sendEntities({ forceRefresh: true }); }
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this._view = view;
@@ -55,13 +63,29 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         switch (msg.type) {
             case 'ready':
                 this.post({ type: 'connectionState', connected: this.connectionManager.isConnected, restoring: this.connectionManager.isRestoring });
-                if (this.connectionManager.isConnected) { await this.sendEntities(); }
+                if (this.connectionManager.isConnected) {
+                    // Fire-and-forget both, same as the constructor's onDidChangeConnection handler --
+                    // awaiting sendEntities() here would delay the filter until its OWN background
+                    // refresh finishes (sendEntities doesn't resolve until then, even though it already
+                    // posted the cached list synchronously), which is exactly the "shows unfiltered,
+                    // then corrects a second later" lag this is meant to fix.
+                    void this.sendEntities();
+                    // post() silently no-ops while no view is attached, so a solution filter applied
+                    // by the constructor's onDidChangeConnection handler (which can fire before the
+                    // webview finishes resolving) may never have reached this view. 'ready' only fires
+                    // once the webview is actually listening, so re-apply it here to be sure.
+                    const defaultSolution = this.connectionManager.getDefaultSolution();
+                    if (defaultSolution) { void this.applySolutionFilter(defaultSolution); }
+                }
                 break;
             case 'connect':
                 await this.connectionManager.connect();
                 break;
             case 'showSolutionPicker':
                 await this.showSolutionPicker();
+                break;
+            case 'clearSolutionFilter':
+                await this.connectionManager.setDefaultSolution(undefined);
                 break;
             case 'makeInterface':
                 await this.makeInterface(
@@ -80,11 +104,35 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         }
     }
 
-    private async sendEntities(): Promise<void> {
-        this.post({ type: 'entitiesLoading' });
+    // Cache-first by default: a cached list (if any) renders immediately while a fresh fetch runs in
+    // the background and silently replaces it on success (see 'entitiesRefreshed' in protocol.ts) --
+    // this is also what lets entities show up instantly right after an optimistic connection restore,
+    // well before the user has even opened this view. `forceRefresh` (the "Refresh Entities" command)
+    // skips straight to a blocking fetch, same as when there's no cache yet.
+    private async sendEntities(opts: { forceRefresh?: boolean } = {}): Promise<void> {
+        const environmentUrl = this.connectionManager.connection?.environmentUrl;
+        if (!environmentUrl) { return; }
+
         this._iconCache.clear(); // icons may differ across environments; refetch on demand
+        const cached = opts.forceRefresh ? undefined : this.entityCache.get(environmentUrl);
+
+        if (cached) {
+            this.post({ type: 'entities', data: cached });
+            this.post({ type: 'entitiesRefreshing' });
+            try {
+                const fresh = await this.client.getEntities();
+                await this.entityCache.set(environmentUrl, fresh);
+                this.post({ type: 'entitiesRefreshed', data: fresh });
+            } catch {
+                // Stale cache is still showing -- don't replace it with an error toast over a silent refresh.
+            }
+            return;
+        }
+
+        this.post({ type: 'entitiesLoading' });
         try {
             const data = await this.client.getEntities();
+            await this.entityCache.set(environmentUrl, data);
             this.post({ type: 'entities', data });
         } catch (err) {
             this.post({ type: 'entitiesError', message: errMsg(err) });
@@ -226,7 +274,7 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
     }
 
     private async showSolutionPicker(): Promise<void> {
-        let solutions;
+        let solutions: Solution[];
         try {
             solutions = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solutions…', cancellable: false },
@@ -243,18 +291,51 @@ export class EntityExplorerWebviewProvider implements vscode.WebviewViewProvider
         );
         if (!pick) { return; }
 
+        // The solution used to filter this view doubles as the "default solution" for new components
+        // (see webResourceManager.ts's pickSolution) and is re-applied automatically on future connects.
+        await this.connectionManager.setDefaultSolution(pick.solution);
+        await this.applySolutionFilter(pick.solution, /* showProgress */ true);
+    }
+
+    // showProgress is suppressed for the auto-apply-on-connect path so restoring a connection doesn't
+    // pop a notification toast on every reload -- only an explicit "Filter by Solution" pick shows one.
+    private async applySolutionFilter(solution: DefaultSolutionRef, showProgress = false): Promise<void> {
+        const environmentUrl = this.connectionManager.connection?.environmentUrl;
+        const cached = environmentUrl ? this.entityCache.getSolutionEntityIds(environmentUrl, solution.solutionId) : undefined;
+
+        if (cached) {
+            // Cache-first, same idea as sendEntities: apply immediately (this is what used to lag
+            // behind the already-cached entity list on every reload) and silently refresh in the
+            // background -- no loading UI, since re-posting solutionFilter is harmless either way.
+            this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: cached });
+            try {
+                const fresh = [...await this.client.getSolutionEntityIds(solution.solutionId)];
+                await this.entityCache.setSolutionEntityIds(environmentUrl!, solution.solutionId, fresh);
+                this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: fresh });
+            } catch {
+                // Stale cache is still applied -- don't surface an error over a silent refresh.
+            }
+            return;
+        }
+
+        const load = () => this.client.getSolutionEntityIds(solution.solutionId);
+
         let entityIds;
         try {
-            entityIds = await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solution components…', cancellable: false },
-                () => this.client.getSolutionEntityIds(pick.solution.solutionId),
-            );
+            entityIds = showProgress
+                ? await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: 'D365: Loading solution components…', cancellable: false },
+                    load,
+                )
+                : await load();
         } catch (err) {
             vscode.window.showErrorMessage(`Failed to load solution components: ${errMsg(err)}`);
             return;
         }
 
-        this.post({ type: 'solutionFilter', name: pick.solution.friendlyName, entityIds: [...entityIds] });
+        const ids = [...entityIds];
+        if (environmentUrl) { await this.entityCache.setSolutionEntityIds(environmentUrl, solution.solutionId, ids); }
+        this.post({ type: 'solutionFilter', name: solution.friendlyName, entityIds: ids });
     }
 
     private post(message: unknown): void {
