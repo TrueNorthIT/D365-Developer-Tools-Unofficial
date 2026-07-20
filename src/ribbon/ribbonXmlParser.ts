@@ -121,6 +121,7 @@ function parseTabList(rawTabs: unknown[], locLabels: Record<string, string>) {
     return rawTabs.map(asObj).filter(isObj).map(tab => ({
         id: attr(tab, 'Id') ?? '',
         title: resolveTitle(tab, locLabels),
+        sequence: attr(tab, 'Sequence'),
         groups: parseGroups(asObj(tab.Groups), locLabels),
         status: 'unchanged' as const,
     }));
@@ -130,6 +131,7 @@ function parseGroups(groupsNode: Record<string, unknown> | undefined, locLabels:
     return asArray(groupsNode?.Group).map(asObj).filter(isObj).map(group => ({
         id: attr(group, 'Id') ?? '',
         title: resolveTitle(group, locLabels),
+        sequence: attr(group, 'Sequence'),
         controls: parseControls(asObj(group.Controls), locLabels),
         status: 'unchanged' as const,
     }));
@@ -173,6 +175,7 @@ function parseControl(kind: RibbonControl['kind'], node: Record<string, unknown>
         image32: attr(node, 'Image32by32'),
         modernImage: attr(node, 'ModernImage'),
         commandId: attr(node, 'Command'),
+        sequence: attr(node, 'Sequence'),
         controls: kind === 'FlyoutAnchor'
             ? parseMenuSections(asObj(node.Menu), locLabels)
             : kind === 'MenuSection' ? parseControls(asObj(node.Controls), locLabels) : undefined,
@@ -187,6 +190,7 @@ function parseMenuSections(menuNode: Record<string, unknown> | undefined, locLab
         label: '',
         toolTipTitle: '',
         toolTipDescription: '',
+        sequence: attr(section, 'Sequence'),
         controls: parseControls(asObj(section.Controls), locLabels),
         status: 'unchanged' as const,
     }));

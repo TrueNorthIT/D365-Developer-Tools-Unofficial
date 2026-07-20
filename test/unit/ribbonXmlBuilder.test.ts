@@ -16,7 +16,7 @@ function baseModel(): RibbonModel {
                         status: 'unchanged',
                         controls: [
                             { kind: 'Button', id: 'added_button', label: 'Added', toolTipTitle: '', toolTipDescription: '', status: 'added' },
-                            { kind: 'Button', id: 'existing_button', label: 'Edited Label', toolTipTitle: '', toolTipDescription: '', status: 'modified' },
+                            { kind: 'Button', id: 'existing_button', label: 'Edited Label', toolTipTitle: '', toolTipDescription: '', status: 'modified', sequence: '40' },
                             { kind: 'Button', id: 'removed_button', label: 'Gone', toolTipTitle: '', toolTipDescription: '', status: 'deleted' },
                         ],
                     },
@@ -56,7 +56,24 @@ describe('buildRibbonDiffXml', () => {
     it('emits a CustomAction for an added control anchored at its group', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<CustomAction Id="added_button\.Custom" Location="grp\.currency\.Controls\._children" Sequence="\d+">/);
-        assert.match(xml, /<Button Id="added_button"[^/]*LabelText="Added"/);
+        assert.match(xml, /<Button Id="added_button"[^/]*LabelText="\$LocLabels:added_button\.LabelText"/);
+    });
+
+    it('emits literal label/tooltip text as a $LocLabels reference plus a matching LocLabel definition, not raw text', () => {
+        const xml = buildRibbonDiffXml(baseModel());
+        assert.match(xml, /<Button Id="added_button"[^/]*LabelText="\$LocLabels:added_button\.LabelText"/);
+        assert.match(
+            xml,
+            /<LocLabels>[\s\S]*<LocLabel Id="added_button\.LabelText">\s*<Titles>\s*<Title languagecode="1033" description="Added"\s*\/>\s*<\/Titles>\s*<\/LocLabel>[\s\S]*<\/LocLabels>/,
+        );
+    });
+
+    it('passes an already-unresolved $LocLabels/$Resources reference straight through, without re-wrapping it', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].label = '$LocLabels:some.other.key';
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<Button Id="added_button"[^/]*LabelText="\$LocLabels:some\.other\.key"/);
+        assert.doesNotMatch(xml, /LocLabel Id="added_button\.LabelText"/);
     });
 
     it('wraps a CustomAction\'s ribbon markup in CommandUIDefinition -- Dataverse rejects import without it', () => {
@@ -80,7 +97,33 @@ describe('buildRibbonDiffXml', () => {
     it('emits a HideCustomAction plus a replacement CustomAction for a modified control', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<HideCustomAction Id="existing_button\.Hide" Location="grp\.currency\.Controls\._children" CommandUIElementId="existing_button" \/>/);
-        assert.match(xml, /<CustomAction Id="existing_button\.Custom" Location="grp\.currency\.Controls\._children"[^>]*>[\s\S]*?LabelText="Edited Label"/);
+        assert.match(xml, /<CustomAction Id="existing_button\.Custom" Location="grp\.currency\.Controls\._children"[^>]*>[\s\S]*?LabelText="\$LocLabels:existing_button\.LabelText"/);
+    });
+
+    it('reuses a modified control\'s original Sequence, so editing a field (e.g. its label) doesn\'t reorder it among its siblings', () => {
+        // existing_button carries sequence: '40' in baseModel() -- a bare edit must not overwrite it
+        // with a fresh counter value (that would move it to wherever the counter happens to land,
+        // typically past every untouched sibling's much lower original Sequence).
+        const xml = buildRibbonDiffXml(baseModel());
+        assert.match(xml, /<CustomAction Id="existing_button\.Custom" Location="grp\.currency\.Controls\._children" Sequence="40">/);
+        assert.match(xml, /<Button Id="existing_button"[^/]*Sequence="40"/);
+    });
+
+    it('assigns a fresh counter-based Sequence to a control with no known original position (added this session)', () => {
+        const xml = buildRibbonDiffXml(baseModel());
+        const customActionMatch = /<CustomAction Id="added_button\.Custom"[^>]*Sequence="(\d+)"/.exec(xml);
+        assert.ok(customActionMatch);
+        assert.notStrictEqual(customActionMatch![1], '40', 'should not collide with existing_button\'s preserved Sequence');
+    });
+
+    it('preserves an unmodified sibling control\'s Sequence when its enclosing group is wholesale re-serialized (e.g. the group\'s own title was edited)', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].status = 'modified';
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'untouched_sibling', label: 'Untouched', toolTipTitle: '', toolTipDescription: '', status: 'unchanged', sequence: '30' },
+        );
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<Button Id="untouched_sibling"[^/]*Sequence="30"/);
     });
 
     it('emits only a HideCustomAction for a deleted control (no replacement)', () => {
@@ -92,7 +135,7 @@ describe('buildRibbonDiffXml', () => {
     it('emits a brand-new tab as a single CustomAction anchored at Mscrm.Tabs._children, nesting its groups/controls', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<CustomAction Id="new_tab\.Custom" Location="Mscrm\.Tabs\._children"/);
-        assert.match(xml, /<Tab Id="new_tab" Title="New Tab">[\s\S]*<Group Id="new_group"[\s\S]*<Button Id="new_tab_button"/);
+        assert.match(xml, /<Tab Id="new_tab"[^>]*Title="\$LocLabels:new_tab\.Title">[\s\S]*<Group Id="new_group"[\s\S]*<Button Id="new_tab_button"/);
         // The new tab's own group/control must not also appear as separate top-level CustomActions.
         assert.doesNotMatch(xml, /Id="new_group\.Custom"/);
         assert.doesNotMatch(xml, /Id="new_tab_button\.Custom"/);
@@ -138,11 +181,35 @@ describe('buildRibbonDiffXml', () => {
         assert.match(xml, /<DisplayRules>[\s\S]*CustomRule[\s\S]*<\/DisplayRules>/);
     });
 
-    it('preserves a control\'s modernImage attribute', () => {
+    it('preserves a built-in Fluent icon name on modernImage as-is, without a $webresource: prefix', () => {
         const model = baseModel();
         model.tabs[0].groups[0].controls[0].modernImage = 'Refresh';
         const xml = buildRibbonDiffXml(model);
         assert.match(xml, /<Button Id="added_button"[^/]*ModernImage="Refresh"/);
+    });
+
+    it('prefixes a plain web resource name on image16/image32/modernImage/JS Library with $webresource:, since Dataverse only resolves the prefixed form', () => {
+        const model = baseModel();
+        const control = model.tabs[0].groups[0].controls[0];
+        control.image16 = 'new_icon16.png';
+        control.image32 = 'new_icon32.png';
+        control.modernImage = 'new_custom_icon.png'; // not a built-in Fluent icon name
+        model.commandDefinitions[1].actions = [{ type: 'JavaScriptFunction', library: 'new_lib.js', functionName: 'run', params: [] }];
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<Button Id="added_button"[^/]*Image16by16="\$webresource:new_icon16\.png"/);
+        assert.match(xml, /<Button Id="added_button"[^/]*Image32by32="\$webresource:new_icon32\.png"/);
+        assert.match(xml, /<Button Id="added_button"[^/]*ModernImage="\$webresource:new_custom_icon\.png"/);
+        assert.match(xml, /<JavaScriptFunction Library="\$webresource:new_lib\.js"/);
+    });
+
+    it('leaves an already-prefixed $webresource: reference or a /-rooted system path untouched', () => {
+        const model = baseModel();
+        const control = model.tabs[0].groups[0].controls[0];
+        control.image16 = '$webresource:new_icon16.png';
+        control.image32 = '/_imgs/ribbon/edit.png';
+        const xml = buildRibbonDiffXml(model);
+        assert.match(xml, /<Button Id="added_button"[^/]*Image16by16="\$webresource:new_icon16\.png"/);
+        assert.match(xml, /<Button Id="added_button"[^/]*Image32by32="\/_imgs\/ribbon\/edit\.png"/);
     });
 
     it('produces a well-formed top-level RibbonDiffXml document', () => {
@@ -151,6 +218,7 @@ describe('buildRibbonDiffXml', () => {
         assert.ok(xml.trim().endsWith('</RibbonDiffXml>'));
         assert.match(xml, /<CustomActions>[\s\S]*<\/CustomActions>/);
         assert.match(xml, /<CommandDefinitions>[\s\S]*<\/CommandDefinitions>/);
+        assert.match(xml, /<LocLabels>[\s\S]*<\/LocLabels>/);
         assert.match(xml, /<HideCustomActions>[\s\S]*<\/HideCustomActions>/);
     });
 });
@@ -218,7 +286,8 @@ describe('mergeRibbonDiffXml', () => {
         const matches = xml.match(/Id="existing_button\.Custom"/g);
         assert.strictEqual(matches?.length, 1, 'the old and new existing_button.Custom fragments must not both appear');
         assert.doesNotMatch(xml, /Old Label/);
-        assert.match(xml, /LabelText="Edited Label"/);
+        assert.match(xml, /LabelText="\$LocLabels:existing_button\.LabelText"/);
+        assert.match(xml, /<LocLabel Id="existing_button\.LabelText">\s*<Titles>\s*<Title languagecode="1033" description="Edited Label"\s*\/>/);
     });
 
     it('still emits this session\'s new fragments (added tab/control) alongside preserved ones', () => {

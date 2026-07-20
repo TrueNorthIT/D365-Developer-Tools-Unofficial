@@ -369,6 +369,19 @@ describe('ribbonState reducer: reorderControl', () => {
         assert.strictEqual(controls[1].status, 'modified');
     });
 
+    it('assigns each repositioned control a fresh Sequence matching its new array position, not its stale original one', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].sequence = '10'; // btn.no.command
+        model.tabs[0].groups[0].controls[1].sequence = '20'; // btn.with.command
+        const next = reducer(stateWithModel(model), { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.with.command', beforeControlId: 'btn.no.command' });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
+        const first = Number(controls[0].sequence);
+        const second = Number(controls[1].sequence);
+        assert.ok(first < second, `expected the new first control's Sequence (${first}) to sort before the new second's (${second})`);
+    });
+
     it('appends to the end when beforeControlId is null', () => {
         const state = stateWithModel(baseModel());
         const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.no.command', beforeControlId: null });

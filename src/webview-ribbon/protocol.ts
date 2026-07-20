@@ -18,6 +18,9 @@ export interface RibbonControl {
   image32?: string;
   modernImage?: string;
   commandId?: string;
+  /** This control's Sequence attribute in the merged/effective ribbon -- see ribbonModel.ts's copy of
+   *  this type for the full explanation. Only reorderControl (ribbonState.ts) ever reassigns it. */
+  sequence?: string;
   controls?: RibbonControl[];
   status: RibbonNodeStatus;
 }
@@ -25,6 +28,7 @@ export interface RibbonControl {
 export interface RibbonGroup {
   id: string;
   title: string;
+  sequence?: string;
   controls: RibbonControl[];
   status: RibbonNodeStatus;
 }
@@ -32,6 +36,7 @@ export interface RibbonGroup {
 export interface RibbonTab {
   id: string;
   title: string;
+  sequence?: string;
   groups: RibbonGroup[];
   status: RibbonNodeStatus;
 }

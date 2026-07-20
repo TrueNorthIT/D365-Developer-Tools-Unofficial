@@ -329,8 +329,15 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
                 : [...rest.slice(0, insertIndex), control, ...rest.slice(insertIndex)];
             if (reordered.every((c, i) => c === arr[i])) { break; } // dropped back where it started
 
-            // Persist reorder on export by re-emitting the affected controls with updated Sequences.
-            for (const c of reordered) { touch(c); }
+            // Persist reorder on export by giving every repositioned control a fresh Sequence matching
+            // its new position -- ribbonXmlBuilder.ts's buildRibbonDiffFragments otherwise reuses a
+            // 'modified' control's EXISTING Sequence verbatim (so that a plain field edit, e.g. a
+            // label change, doesn't quietly reshuffle it to the back of the group), so a real move has
+            // to say so explicitly by updating the stored Sequence itself, right here.
+            reordered.forEach((c, i) => {
+                touch(c);
+                if (c.status !== 'deleted') { c.sequence = String((i + 1) * 10); }
+            });
             found.group.controls = reordered;
             break;
         }

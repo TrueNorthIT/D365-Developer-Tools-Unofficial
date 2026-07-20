@@ -18,6 +18,12 @@ export interface RibbonControl {
      *  resource and simply have no icon to show. */
     modernImage?: string;
     commandId?: string;
+    /** This control's Sequence attribute in the merged/effective ribbon -- its position relative to
+     *  sibling controls in the same group. Preserved verbatim through an edit that doesn't reorder
+     *  anything (see buildRibbonDiffFragments in ribbonXmlBuilder.ts); reorderControl (ribbonState.ts)
+     *  is the only thing that ever assigns a new value, to reflect a drag-and-drop move. Undefined for
+     *  a control added this session, which has no position of its own yet. */
+    sequence?: string;
     /** FlyoutAnchor > Menu > MenuSection > Controls, or a MenuSection's own Controls. */
     controls?: RibbonControl[];
     status: RibbonNodeStatus;
@@ -26,6 +32,8 @@ export interface RibbonControl {
 export interface RibbonGroup {
     id: string;
     title: string;
+    /** See RibbonControl.sequence -- same idea, one level up (position among sibling groups in a tab). */
+    sequence?: string;
     controls: RibbonControl[];
     status: RibbonNodeStatus;
 }
@@ -33,6 +41,8 @@ export interface RibbonGroup {
 export interface RibbonTab {
     id: string;
     title: string;
+    /** See RibbonControl.sequence -- same idea, one level up (position among sibling tabs). */
+    sequence?: string;
     groups: RibbonGroup[];
     status: RibbonNodeStatus;
 }

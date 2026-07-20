@@ -5,11 +5,11 @@ const FIXTURE = `
 <RibbonDefinitions>
   <RibbonXml>
     <Tabs>
-      <Tab Id="Mscrm.form.account.MainTab" Title="Home">
+      <Tab Id="Mscrm.form.account.MainTab" Title="Home" Sequence="100">
         <Groups>
-          <Group Id="grp.currency" Title="My Group">
+          <Group Id="grp.currency" Title="My Group" Sequence="10">
             <Controls>
-              <Button Id="new_button" LabelText="$LocLabels:loc1" ToolTipTitle="Click" ToolTipDescription="Does a thing" Command="cmd1" Image16by16="$webresource:new_icon16.png" Image32by32="$webresource:new_icon32.png" ModernImage="Refresh" />
+              <Button Id="new_button" LabelText="$LocLabels:loc1" ToolTipTitle="Click" ToolTipDescription="Does a thing" Command="cmd1" Image16by16="$webresource:new_icon16.png" Image32by32="$webresource:new_icon32.png" ModernImage="Refresh" Sequence="20" />
               <FlyoutAnchor Id="new_flyout" LabelText="More">
                 <Menu>
                   <MenuSection Id="new_flyout.section1">
@@ -91,6 +91,16 @@ describe('parseRibbonXml', () => {
         assert.strictEqual(button.image16, '$webresource:new_icon16.png');
         assert.strictEqual(button.modernImage, 'Refresh');
         assert.strictEqual(button.toolTipDescription, 'Does a thing');
+    });
+
+    it('preserves each node\'s original Sequence, so a later edit can keep it in its original position (see ribbonXmlBuilder.ts)', () => {
+        const model = parseRibbonXml(FIXTURE);
+        const tab = model.tabs[0];
+        const group = tab.groups[0];
+        const button = group.controls[0];
+        assert.strictEqual(tab.sequence, '100');
+        assert.strictEqual(group.sequence, '10');
+        assert.strictEqual(button.sequence, '20');
     });
 
     it('resolves $LocLabels references against the 1033 (or first) title', () => {
