@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { buildRibbonDiffXml, mergeRibbonDiffXml } from '../../src/ribbon/ribbonXmlBuilder';
-import type { RibbonModel } from '../../src/ribbon/ribbonModel';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, mergeRibbonDiffXml, resolveLabelsFromCache } from '../../src/ribbon/ribbonXmlBuilder';
+import type { RibbonControl, RibbonModel } from '../../src/ribbon/ribbonModel';
 
 function baseModel(): RibbonModel {
     return {
@@ -74,6 +74,20 @@ describe('buildRibbonDiffXml', () => {
         const xml = buildRibbonDiffXml(model);
         assert.match(xml, /<Button Id="added_button"[^/]*LabelText="\$LocLabels:some\.other\.key"/);
         assert.doesNotMatch(xml, /LocLabel Id="added_button\.LabelText"/);
+    });
+
+    it('returns resolvedLabels as a plain LocLabel-Id -> literal-text map alongside the XML fragments -- see ribbonEditorPanel.ts\'s resolvedLabelCache', () => {
+        const fragments = buildRibbonDiffFragments(baseModel());
+        assert.strictEqual(fragments.resolvedLabels['added_button.LabelText'], 'Added');
+        assert.strictEqual(fragments.resolvedLabels['existing_button.LabelText'], 'Edited Label');
+        assert.strictEqual(fragments.resolvedLabels['new_tab.Title'], 'New Tab');
+    });
+
+    it('does not add a resolvedLabels entry for a control whose label is already an unresolved reference -- nothing to remember', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].label = '$LocLabels:some.other.key';
+        const fragments = buildRibbonDiffFragments(model);
+        assert.strictEqual(fragments.resolvedLabels['added_button.LabelText'], undefined);
     });
 
     it('wraps a CustomAction\'s ribbon markup in CommandUIDefinition -- Dataverse rejects import without it', () => {
@@ -220,6 +234,57 @@ describe('buildRibbonDiffXml', () => {
         assert.match(xml, /<CommandDefinitions>[\s\S]*<\/CommandDefinitions>/);
         assert.match(xml, /<LocLabels>[\s\S]*<\/LocLabels>/);
         assert.match(xml, /<HideCustomActions>[\s\S]*<\/HideCustomActions>/);
+    });
+});
+
+describe('resolveLabelsFromCache', () => {
+    it("fills in a control's label from the cache when it's still an unresolved $LocLabels reference", () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[1].label = '$LocLabels:existing_button.LabelText';
+        resolveLabelsFromCache(model, { 'existing_button.LabelText': 'Edited Label' });
+        assert.strictEqual(model.tabs[0].groups[0].controls[1].label, 'Edited Label');
+    });
+
+    it('fills in a tab/group title the same way', () => {
+        const model = baseModel();
+        model.tabs[0].title = '$LocLabels:Mscrm.form.account.MainTab.Title';
+        model.tabs[0].groups[0].title = '$LocLabels:grp.currency.Title';
+        resolveLabelsFromCache(model, {
+            'Mscrm.form.account.MainTab.Title': 'Home',
+            'grp.currency.Title': 'My Group',
+        });
+        assert.strictEqual(model.tabs[0].title, 'Home');
+        assert.strictEqual(model.tabs[0].groups[0].title, 'My Group');
+    });
+
+    it('leaves a reference as-is on a cache miss, instead of guessing wrong', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[1].label = '$LocLabels:existing_button.LabelText';
+        resolveLabelsFromCache(model, {});
+        assert.strictEqual(model.tabs[0].groups[0].controls[1].label, '$LocLabels:existing_button.LabelText');
+    });
+
+    it('does not touch a value that already resolved to something else (e.g. base-ribbon $Resources: text)', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[1].label = 'Some Other Text';
+        resolveLabelsFromCache(model, { 'existing_button.LabelText': 'Wrong Value' });
+        assert.strictEqual(model.tabs[0].groups[0].controls[1].label, 'Some Other Text');
+    });
+
+    it("resolves a nested FlyoutAnchor/MenuSection child's label too", () => {
+        const model = baseModel();
+        const flyout: RibbonControl = {
+            kind: 'FlyoutAnchor', id: 'flyout1', label: '', toolTipTitle: '', toolTipDescription: '', status: 'unchanged',
+            controls: [{
+                kind: 'MenuSection', id: 'flyout1.section1', label: '', toolTipTitle: '', toolTipDescription: '', status: 'unchanged',
+                controls: [{
+                    kind: 'Button', id: 'flyout1.child', label: '$LocLabels:flyout1.child.LabelText', toolTipTitle: '', toolTipDescription: '', status: 'unchanged',
+                }],
+            }],
+        };
+        model.tabs[0].groups[0].controls.push(flyout);
+        resolveLabelsFromCache(model, { 'flyout1.child.LabelText': 'Nested Item' });
+        assert.strictEqual((flyout.controls![0].controls![0] as RibbonControl).label, 'Nested Item');
     });
 });
 

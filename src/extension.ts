@@ -7,6 +7,7 @@ import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
 import { RibbonEditorPanel } from './ribbonEditorPanel';
 import { getOutputChannel } from './logger';
 import { EntityCache } from './entityCache';
+import { RibbonLabelCache } from './ribbonLabelCache';
 import { D365StatusBar, showD365Menu } from './statusBar';
 import { McpBridge, isMcpConfigured } from './mcpBridge';
 import { McpStatusBar } from './mcpStatusBar';
@@ -26,12 +27,13 @@ export function activate(context: vscode.ExtensionContext) {
     const connectionManager = new ConnectionManager(context);
     const client = new DataverseClient(connectionManager);
     const entityCache = new EntityCache(context);
+    const ribbonLabelCache = new RibbonLabelCache(context);
     const explorerProvider = new EntityExplorerWebviewProvider(
         connectionManager,
         client,
         context.extensionUri,
         entityCache,
-        (logicalName, displayName, ribbonLocation) => void RibbonEditorPanel.createOrShow(context.extensionUri, client, logicalName, displayName, ribbonLocation),
+        (logicalName, displayName, ribbonLocation) => void RibbonEditorPanel.createOrShow(context.extensionUri, client, ribbonLabelCache, logicalName, displayName, ribbonLocation),
     );
     const statusBar = new D365StatusBar(connectionManager);
     context.subscriptions.push(statusBar);
@@ -123,7 +125,7 @@ export function activate(context: vscode.ExtensionContext) {
             compareWebResource(uri, connectionManager, client, webResourceContentProvider),
         ),
         vscode.commands.registerCommand('d365.configureMcp', () => configureMcpCommand(context.extensionPath)),
-        vscode.commands.registerCommand('d365.editRibbon', () => editRibbonCommand(client, context.extensionUri)),
+        vscode.commands.registerCommand('d365.editRibbon', () => editRibbonCommand(client, context.extensionUri, ribbonLabelCache)),
     );
 }
 
@@ -214,7 +216,7 @@ async function browseEntity(client: DataverseClient): Promise<void> {
 
 // ── Edit ribbon (command palette) ───────────────────────────────────────────
 
-async function editRibbonCommand(client: DataverseClient, extensionUri: vscode.Uri): Promise<void> {
+async function editRibbonCommand(client: DataverseClient, extensionUri: vscode.Uri, ribbonLabelCache: RibbonLabelCache): Promise<void> {
     let entities;
     try {
         entities = await vscode.window.withProgress(
@@ -247,7 +249,7 @@ async function editRibbonCommand(client: DataverseClient, extensionUri: vscode.U
     );
     if (!locationPick) { return; }
 
-    await RibbonEditorPanel.createOrShow(extensionUri, client, pick.entity.logicalName, pick.entity.displayName, locationPick.filter);
+    await RibbonEditorPanel.createOrShow(extensionUri, client, ribbonLabelCache, pick.entity.logicalName, pick.entity.displayName, locationPick.filter);
 }
 
 async function configureMcpCommand(extensionPath: string): Promise<void> {

@@ -2,10 +2,11 @@ import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import type { DataverseClient, Publisher, RibbonLocationFilter, RibbonMetadataGenerationStatus } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
-import { buildRibbonDiffXml, mergeRibbonDiffXml } from './ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, mergeRibbonDiffXml, resolveLabelsFromCache } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
 import { buildRibbonSolutionZip, hasRibbonChanges } from './ribbon/solutionPackage';
 import type { RibbonModel } from './ribbon/ribbonModel';
+import type { RibbonLabelCache } from './ribbonLabelCache';
 import { log, logError } from './logger';
 
 const RIBBON_LOCATION_LABELS: Record<RibbonLocationFilter, string> = {
@@ -49,6 +50,7 @@ export class RibbonEditorPanel {
     static async createOrShow(
         extensionUri: vscode.Uri,
         client: DataverseClient,
+        labelCache: RibbonLabelCache,
         entityLogicalName: string,
         entityDisplayName: string,
         ribbonLocation: RibbonLocationFilter,
@@ -84,7 +86,7 @@ export class RibbonEditorPanel {
 
         panel.iconPath = vscode.Uri.joinPath(extensionUri, 'resources', 'Ribbon.svg');
 
-        const editor = new RibbonEditorPanel(panel, extensionUri, client, entityLogicalName, entityDisplayName, ribbonLocation, publisherPrefix);
+        const editor = new RibbonEditorPanel(panel, extensionUri, client, labelCache, entityLogicalName, entityDisplayName, ribbonLocation, publisherPrefix);
         RibbonEditorPanel.panels.set(key, editor);
         panel.onDidDispose(() => RibbonEditorPanel.panels.delete(key));
 
@@ -123,6 +125,7 @@ export class RibbonEditorPanel {
         panel: vscode.WebviewPanel,
         private readonly extensionUri: vscode.Uri,
         private readonly client: DataverseClient,
+        private readonly labelCache: RibbonLabelCache,
         private readonly entityLogicalName: string,
         private readonly entityDisplayName: string,
         private readonly ribbonLocation: RibbonLocationFilter,
@@ -225,6 +228,14 @@ export class RibbonEditorPanel {
             log(`Ribbon editor ('${this.entityLogicalName}'): received ${xml.length} chars of ribbon XML, parsing…`);
             this.model = parseRibbonXml(xml);
             log(`Ribbon editor ('${this.entityLogicalName}'): parsed ${this.model.tabs.length} tab(s), ${this.model.commandDefinitions.length} command definition(s), ${this.model.enableRules.length} enable rule(s), ${this.model.displayRules.length} display rule(s)`);
+
+            // RetrieveEntityRibbon's own LocLabels dictionary doesn't reliably resolve a custom
+            // $LocLabels: reference back to its real text (confirmed even right after a full ribbon
+            // metadata regeneration), even though the label displays correctly in the actual running
+            // app -- fall back to whatever this tool itself last published for that Id, if anything.
+            const environmentUrl = this.client.environmentUrl;
+            if (environmentUrl) { resolveLabelsFromCache(this.model, this.labelCache.get(environmentUrl)); }
+
             this.postModel();
         } catch (err) {
             logError(`ribbon editor ('${this.entityLogicalName}') loadRibbon`, err);
@@ -367,6 +378,11 @@ export class RibbonEditorPanel {
             if (importedSolution) { await this.client.deleteSolution(importedSolution.solutionId).catch(() => undefined); }
             return;
         }
+
+        // Remember what each $LocLabels: reference just published actually says, since re-reading it
+        // back from RetrieveEntityRibbon isn't reliable -- see loadRibbon and RibbonLabelCache.
+        const environmentUrl = this.client.environmentUrl;
+        if (environmentUrl) { await this.labelCache.merge(environmentUrl, buildRibbonDiffFragments(model).resolvedLabels); }
 
         progress.report({ message: 'Cleaning up…' });
         if (importedSolution) {

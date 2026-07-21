@@ -23,6 +23,15 @@ const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '
 // Sequence" means and when it's the node's preserved original vs. a freshly assigned one.
 type SeqOf = (node: { sequence?: string }) => number;
 
+// Accumulates label output across the whole serialization pass -- `fragments` is the `<LocLabel>` XML
+// (RibbonDiffFragments.locLabels), `resolved` is the same data as a plain LocLabel-Id -> literal-text
+// map (RibbonDiffFragments.resolvedLabels) -- see labelRef, and that field's own doc comment for why
+// a second, non-XML copy is worth keeping.
+interface LabelAccumulator {
+    fragments: string[];
+    resolved: Record<string, string>;
+}
+
 export interface RibbonDiffFragments {
     customActions: string[];
     hideCustomActions: string[];
@@ -38,6 +47,11 @@ export interface RibbonDiffFragments {
     removedCustomActionIds: string[];
     /** `<LocLabel>` fragments for any literal label/title/tooltip text emitted above -- see labelRef. */
     locLabels: string[];
+    /** LocLabel Id -> the literal text it was generated from -- a plain-object mirror of `locLabels`
+     *  (same entries, pre-XML), so a caller with nowhere else to get this back (RetrieveEntityRibbon's
+     *  own LocLabels dictionary doesn't reliably resolve a custom entry, even right after publish --
+     *  see ribbonEditorPanel.ts's resolvedLabelCache) can remember it locally instead. */
+    resolvedLabels: Record<string, string>;
 }
 
 // Walks the model's tracked edits (added/modified/deleted) into the individual XML fragments a
@@ -47,7 +61,7 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
     const customActions: string[] = [];
     const hideCustomActions: string[] = [];
     const removedCustomActionIds: string[] = [];
-    const locLabels: string[] = [];
+    const labels: LabelAccumulator = { fragments: [], resolved: {} };
     let sequence = 100;
 
     // A node's own original Sequence (parsed from the effective ribbon) is its position relative to
@@ -62,13 +76,13 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
     for (const tab of model.tabs) {
         if (tab.status === 'added') {
             const seq = seqOf(tab);
-            customActions.push(customAction(`${tab.id}.Custom`, 'Mscrm.Tabs._children', seq, serializeTab(tab, seq, seqOf, locLabels)));
+            customActions.push(customAction(`${tab.id}.Custom`, 'Mscrm.Tabs._children', seq, serializeTab(tab, seq, seqOf, labels)));
             continue; // groups/controls are already nested inside the serialized tab
         }
         if (tab.status === 'modified') {
             hideCustomActions.push(hideCustomAction(tab.id, 'Mscrm.Tabs._children'));
             const seq = seqOf(tab);
-            customActions.push(customAction(`${tab.id}.Custom`, 'Mscrm.Tabs._children', seq, serializeTab(tab, seq, seqOf, locLabels)));
+            customActions.push(customAction(`${tab.id}.Custom`, 'Mscrm.Tabs._children', seq, serializeTab(tab, seq, seqOf, labels)));
             continue;
         }
         if (tab.status === 'deleted') {
@@ -81,13 +95,13 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
         for (const group of tab.groups) {
             if (group.status === 'added') {
                 const seq = seqOf(group);
-                customActions.push(customAction(`${group.id}.Custom`, groupsLocation, seq, serializeGroup(group, seq, seqOf, locLabels)));
+                customActions.push(customAction(`${group.id}.Custom`, groupsLocation, seq, serializeGroup(group, seq, seqOf, labels)));
                 continue;
             }
             if (group.status === 'modified') {
                 hideCustomActions.push(hideCustomAction(group.id, groupsLocation));
                 const seq = seqOf(group);
-                customActions.push(customAction(`${group.id}.Custom`, groupsLocation, seq, serializeGroup(group, seq, seqOf, locLabels)));
+                customActions.push(customAction(`${group.id}.Custom`, groupsLocation, seq, serializeGroup(group, seq, seqOf, labels)));
                 continue;
             }
             if (group.status === 'deleted') {
@@ -100,11 +114,11 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
             for (const control of group.controls) {
                 if (control.status === 'added') {
                     const seq = seqOf(control);
-                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, locLabels)));
+                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, labels)));
                 } else if (control.status === 'modified') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
                     const seq = seqOf(control);
-                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, locLabels)));
+                    customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, labels)));
                 } else if (control.status === 'deleted') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
                     removedCustomActionIds.push(`${control.id}.Custom`);
@@ -119,7 +133,10 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
     const enableRules = model.enableRules.filter(r => r.status === 'added' || r.status === 'modified').map(r => r.xml.trim());
     const displayRules = model.displayRules.filter(r => r.status === 'added' || r.status === 'modified').map(r => r.xml.trim());
 
-    return { customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, removedCustomActionIds, locLabels };
+    return {
+        customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, removedCustomActionIds,
+        locLabels: labels.fragments, resolvedLabels: labels.resolved,
+    };
 }
 
 // Builds a standalone RibbonDiffXml containing only this session's tracked edits -- used by the
@@ -195,6 +212,39 @@ export function mergeRibbonDiffXml(existingRibbonDiffXml: string, model: RibbonM
     return assembleRibbonDiffXml(customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, locLabels);
 }
 
+// Fills in any still-unresolved `$LocLabels:` reference in `model` from a locally-remembered cache of
+// labels this tool itself most recently published for that Id -- see ribbonEditorPanel.ts's
+// resolvedLabelCache. RetrieveEntityRibbon's own LocLabels dictionary doesn't reliably resolve a
+// custom entry back to its literal text -- confirmed even right after a full "regenerate ribbon
+// metadata" -- even though the label displays correctly in the actual running app; this is purely a
+// workaround for that read-side gap, not a correction to anything wrong in the published ribbon. A
+// cache miss (base ribbon, another tool's customization, or a fresh workspace) leaves the raw
+// reference exactly as parsed, falling through to the usual guess-from-Id display. Mutates `model` in
+// place -- safe here since it's only ever called on a model freshly returned from parseRibbonXml,
+// before anything else observes it.
+export function resolveLabelsFromCache(model: RibbonModel, cache: Record<string, string>): void {
+    for (const tab of model.tabs) {
+        tab.title = resolveFromCache(tab.title, `${tab.id}.Title`, cache);
+        for (const group of tab.groups) {
+            group.title = resolveFromCache(group.title, `${group.id}.Title`, cache);
+            resolveControlLabelsFromCache(group.controls, cache);
+        }
+    }
+}
+
+function resolveControlLabelsFromCache(controls: RibbonControl[], cache: Record<string, string>): void {
+    for (const control of controls) {
+        control.label = resolveFromCache(control.label, `${control.id}.LabelText`, cache);
+        control.toolTipTitle = resolveFromCache(control.toolTipTitle, `${control.id}.ToolTipTitle`, cache);
+        control.toolTipDescription = resolveFromCache(control.toolTipDescription, `${control.id}.ToolTipDescription`, cache);
+        if (control.controls) { resolveControlLabelsFromCache(control.controls, cache); }
+    }
+}
+
+function resolveFromCache(raw: string, locLabelId: string, cache: Record<string, string>): string {
+    return raw === `$LocLabels:${locLabelId}` ? (cache[locLabelId] ?? raw) : raw;
+}
+
 // Keeps every existing top-level fragment in `sectionTag` whose Id doesn't collide with one of
 // `newFragments`, and isn't in `extraExcludeIds`, verbatim byte-for-byte from the source diff, then
 // appends the new ones -- so an edit to a previously-customized node replaces its old fragment
@@ -264,24 +314,24 @@ function splitTopLevelElements(innerXml: string): Array<{ id: string | undefined
 
 // ── Node serialization (RibbonModel -> XML fragment) ─────────────────────────
 
-function serializeTab(tab: RibbonTab, seq: number, seqOf: SeqOf, locLabels: string[]): string {
+function serializeTab(tab: RibbonTab, seq: number, seqOf: SeqOf, labels: LabelAccumulator): string {
     const obj: Record<string, unknown> = { '@_Id': tab.id, '@_Sequence': String(seq) };
-    const title = labelRef(tab.title, `${tab.id}.Title`, locLabels);
+    const title = labelRef(tab.title, `${tab.id}.Title`, labels);
     if (title) { obj['@_Title'] = title; }
     const groups = tab.groups.filter(g => g.status !== 'deleted');
-    if (groups.length) { obj.Groups = { Group: groups.map(g => groupToObj(g, seqOf(g), seqOf, locLabels)) }; }
+    if (groups.length) { obj.Groups = { Group: groups.map(g => groupToObj(g, seqOf(g), seqOf, labels)) }; }
     return builder.build({ Tab: obj }) as string;
 }
 
-function serializeGroup(group: RibbonGroup, seq: number, seqOf: SeqOf, locLabels: string[]): string {
-    return builder.build({ Group: groupToObj(group, seq, seqOf, locLabels) }) as string;
+function serializeGroup(group: RibbonGroup, seq: number, seqOf: SeqOf, labels: LabelAccumulator): string {
+    return builder.build({ Group: groupToObj(group, seq, seqOf, labels) }) as string;
 }
 
-function groupToObj(group: RibbonGroup, seq: number, seqOf: SeqOf, locLabels: string[]): Record<string, unknown> {
+function groupToObj(group: RibbonGroup, seq: number, seqOf: SeqOf, labels: LabelAccumulator): Record<string, unknown> {
     const obj: Record<string, unknown> = { '@_Id': group.id, '@_Sequence': String(seq) };
-    const title = labelRef(group.title, `${group.id}.Title`, locLabels);
+    const title = labelRef(group.title, `${group.id}.Title`, labels);
     if (title) { obj['@_Title'] = title; }
-    const controls = controlsToObj(group.controls, locLabels, seqOf);
+    const controls = controlsToObj(group.controls, labels, seqOf);
     if (controls) { obj.Controls = controls; }
     return obj;
 }
@@ -298,21 +348,21 @@ function groupToObj(group: RibbonGroup, seq: number, seqOf: SeqOf, locLabels: st
 // Scoped to only this direct "control added/modified in an existing group" path -- not the shared
 // controlToObj used for nested Menu/FlyoutAnchor children -- since there's no evidence yet either
 // way for how those should behave, and guessing wrong there risks the opposite problem instead.
-function serializeControl(control: RibbonControl, sequence: number, locLabels: string[]): string {
-    const obj = controlToObj(control, locLabels);
+function serializeControl(control: RibbonControl, sequence: number, labels: LabelAccumulator): string {
+    const obj = controlToObj(control, labels);
     obj['@_Sequence'] = String(sequence);
     obj['@_TemplateAlias'] = 'o2';
     return builder.build({ [control.kind]: obj }) as string;
 }
 
-function controlToObj(control: RibbonControl, locLabels: string[], seq?: number): Record<string, unknown> {
+function controlToObj(control: RibbonControl, labels: LabelAccumulator, seq?: number): Record<string, unknown> {
     const obj: Record<string, unknown> = { '@_Id': control.id };
     if (seq !== undefined) { obj['@_Sequence'] = String(seq); }
-    const label = labelRef(control.label, `${control.id}.LabelText`, locLabels);
+    const label = labelRef(control.label, `${control.id}.LabelText`, labels);
     if (label) { obj['@_LabelText'] = label; }
-    const toolTipTitle = labelRef(control.toolTipTitle, `${control.id}.ToolTipTitle`, locLabels);
+    const toolTipTitle = labelRef(control.toolTipTitle, `${control.id}.ToolTipTitle`, labels);
     if (toolTipTitle) { obj['@_ToolTipTitle'] = toolTipTitle; }
-    const toolTipDescription = labelRef(control.toolTipDescription, `${control.id}.ToolTipDescription`, locLabels);
+    const toolTipDescription = labelRef(control.toolTipDescription, `${control.id}.ToolTipDescription`, labels);
     if (toolTipDescription) { obj['@_ToolTipDescription'] = toolTipDescription; }
     if (control.image16) { obj['@_Image16by16'] = webResourceRef(control.image16); }
     if (control.image32) { obj['@_Image32by32'] = webResourceRef(control.image32); }
@@ -326,10 +376,10 @@ function controlToObj(control: RibbonControl, locLabels: string[], seq?: number)
     if (control.kind === 'FlyoutAnchor' && children.length) {
         obj.Menu = { MenuSection: children.map(section => ({
             '@_Id': section.id,
-            Controls: controlsToObj(section.controls ?? [], locLabels),
+            Controls: controlsToObj(section.controls ?? [], labels),
         })) };
     } else if (control.kind === 'MenuSection' && children.length) {
-        obj.Controls = controlsToObj(children, locLabels);
+        obj.Controls = controlsToObj(children, labels);
     }
     return obj;
 }
@@ -339,11 +389,11 @@ function controlToObj(control: RibbonControl, locLabels: string[], seq?: number)
 // controls when the enclosing group/tab itself is being wholesale re-serialized (so an edit to just
 // the group's title, say, doesn't also silently drop every one of its buttons' Sequence and leave
 // their order undefined). Omitted (menu-nested children, see controlToObj) to leave those unchanged.
-function controlsToObj(controls: RibbonControl[], locLabels: string[], seqOf?: SeqOf): Record<string, unknown> | undefined {
+function controlsToObj(controls: RibbonControl[], labels: LabelAccumulator, seqOf?: SeqOf): Record<string, unknown> | undefined {
     const grouped: Record<string, unknown[]> = {};
     for (const control of controls) {
         if (control.status === 'deleted') { continue; }
-        (grouped[control.kind] ??= []).push(controlToObj(control, locLabels, seqOf?.(control)));
+        (grouped[control.kind] ??= []).push(controlToObj(control, labels, seqOf?.(control)));
     }
     return Object.keys(grouped).length ? grouped : undefined;
 }
@@ -377,12 +427,13 @@ function modernImageRef(value: string): string {
 // content, or a prior customization) passes through as-is rather than being wrapped again. Returns
 // undefined for an empty value, so the caller can omit the attribute entirely -- matching every other
 // optional attribute in this file.
-function labelRef(value: string, locLabelId: string, locLabels: string[]): string | undefined {
+function labelRef(value: string, locLabelId: string, labels: LabelAccumulator): string | undefined {
     if (!value) { return undefined; }
     if (value.startsWith('$LocLabels:') || value.startsWith('$Resources:')) { return value; }
-    locLabels.push(
+    labels.fragments.push(
         `<LocLabel Id="${escapeAttr(locLabelId)}">\n  <Titles>\n    <Title languagecode="1033" description="${escapeAttr(value)}" />\n  </Titles>\n</LocLabel>`,
     );
+    labels.resolved[locLabelId] = value;
     return `$LocLabels:${locLabelId}`;
 }
 

@@ -175,6 +175,12 @@ export type RibbonLocationFilter = 'All' | 'Form' | 'HomepageGrid' | 'SubGrid';
 export class DataverseClient {
     constructor(private readonly connectionManager: ConnectionManager) {}
 
+    /** The connected environment's URL, or undefined if not currently connected -- e.g. for keying a
+     *  per-environment cache without a caller needing the whole ConnectionManager (see RibbonLabelCache). */
+    get environmentUrl(): string | undefined {
+        return this.connectionManager.connection?.environmentUrl;
+    }
+
     async getEntities(): Promise<EntityDefinition[]> {
         const url = this.apiUrl(
             'EntityDefinitions',
