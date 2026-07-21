@@ -202,11 +202,13 @@ describe('parseRuleCondition', () => {
 });
 
 describe('parseRuleCondition: OrRule', () => {
-    it('parses an OrRule with two different nested condition types', () => {
+    it('parses an OrRule with two different nested condition types, each in its own <Or>', () => {
         const xml = `<EnableRule Id="r1">
   <OrRule>
     <Or>
       <CrmClientTypeRule Type="Web" />
+    </Or>
+    <Or>
       <FormStateRule State="Create" InvertResult="true" />
     </Or>
   </OrRule>
@@ -221,11 +223,13 @@ describe('parseRuleCondition: OrRule', () => {
         }
     });
 
-    it('parses an OrRule with multiple siblings of the same nested condition type', () => {
+    it('parses an OrRule with multiple <Or> siblings of the same nested condition type', () => {
         const xml = `<DisplayRule Id="r1">
   <OrRule>
     <Or>
       <EntityRule EntityName="account" />
+    </Or>
+    <Or>
       <EntityRule EntityName="contact" />
     </Or>
   </OrRule>
@@ -238,8 +242,13 @@ describe('parseRuleCondition: OrRule', () => {
         }
     });
 
-    it('falls back to Raw when a nested condition is unrecognized (bails the whole OrRule, not just that branch)', () => {
-        const xml = '<EnableRule Id="r1"><OrRule><Or><CrmClientTypeRule Type="Web" /><FeatureControlRule /></Or></OrRule></EnableRule>';
+    it('falls back to Raw when a nested condition is unrecognized (bails the whole OrRule, not just that clause)', () => {
+        const xml = '<EnableRule Id="r1"><OrRule><Or><CrmClientTypeRule Type="Web" /></Or><Or><FeatureControlRule /></Or></OrRule></EnableRule>';
+        assert.deepStrictEqual(parseRuleCondition(xml), { type: 'Raw', xml });
+    });
+
+    it('falls back to Raw for a single <Or> wrapping more than one condition (an AND-group nested inside one OR clause -- not representable in this editor\'s flat per-clause model)', () => {
+        const xml = '<EnableRule Id="r1"><OrRule><Or><CrmClientTypeRule Type="Web" /><FormStateRule State="Create" /></Or><Or><SkuRule Sku="Online" /></Or></OrRule></EnableRule>';
         assert.deepStrictEqual(parseRuleCondition(xml), { type: 'Raw', xml });
     });
 
@@ -302,7 +311,7 @@ describe('serializeRuleCondition', () => {
         assert.strictEqual(serializeRuleCondition('r1', 'EnableRule', raw), raw.xml);
     });
 
-    it('serializes an OrRule with multiple different condition types under one <Or>', () => {
+    it('serializes an OrRule with multiple different condition types, each in its own <Or> sibling', () => {
         const xml = serializeRuleCondition('r1', 'EnableRule', {
             type: 'OrRule',
             conditions: [
@@ -310,10 +319,13 @@ describe('serializeRuleCondition', () => {
                 { type: 'FormStateRule', state: 'Create', invertResult: false, otherAttrs: {} },
             ],
         });
-        assert.match(xml, /<OrRule>[\s\S]*<Or>[\s\S]*<CrmClientTypeRule Type="Web"\/?>[\s\S]*<FormStateRule State="Create"\/?>[\s\S]*<\/Or>[\s\S]*<\/OrRule>/);
+        assert.match(
+            xml,
+            /<OrRule>\s*<Or>\s*<CrmClientTypeRule Type="Web"\/?>\s*<\/Or>\s*<Or>\s*<FormStateRule State="Create"\/?>\s*<\/Or>\s*<\/OrRule>/,
+        );
     });
 
-    it('serializes an OrRule with multiple siblings of the same condition type as repeated elements', () => {
+    it('serializes an OrRule with multiple siblings of the same condition type as separate <Or> elements, not grouped under one', () => {
         const xml = serializeRuleCondition('r1', 'DisplayRule', {
             type: 'OrRule',
             conditions: [
@@ -321,8 +333,31 @@ describe('serializeRuleCondition', () => {
                 { type: 'EntityRule', entityName: 'contact', context: '', appliesTo: '', invertResult: false, otherAttrs: {} },
             ],
         });
-        assert.match(xml, /<EntityRule EntityName="account"\/?>/);
-        assert.match(xml, /<EntityRule EntityName="contact"\/?>/);
+        const orBlocks = [...xml.matchAll(/<Or>([\s\S]*?)<\/Or>/g)].map(m => m[1].trim());
+        assert.strictEqual(orBlocks.length, 2, 'each clause must be its own <Or>, not two conditions inside one');
+        assert.match(orBlocks[0], /^<EntityRule EntityName="account"\/?>$/);
+        assert.match(orBlocks[1], /^<EntityRule EntityName="contact"\/?>$/);
+    });
+
+    it('never puts more than one condition inside a single <Or> -- that evaluates as an AND, not an OR, and is the root cause of two real bugs this editor hit', () => {
+        const xml = serializeRuleCondition('r1', 'EnableRule', {
+            type: 'OrRule',
+            conditions: [
+                { type: 'CrmClientTypeRule', clientType: 'Web', invertResult: false, otherAttrs: {} },
+                { type: 'CrmClientTypeRule', clientType: 'Outlook', invertResult: false, otherAttrs: {} },
+            ],
+        });
+        const orOpenTags = xml.match(/<Or>/g) ?? [];
+        assert.strictEqual(orOpenTags.length, 2, 'two clauses must produce two <Or> elements');
+    });
+
+    it('does not round-trip a leaf condition\'s Id as an otherAttrs entry -- not schema data this editor models per leaf condition', () => {
+        const xml = '<EnableRule Id="r1"><OrRule><Or><CrmClientTypeRule Type="Web" Id="some.stale.id" /></Or></OrRule></EnableRule>';
+        const condition = parseRuleCondition(xml);
+        assert.strictEqual(condition.type, 'OrRule');
+        if (condition.type === 'OrRule') {
+            assert.deepStrictEqual(condition.conditions[0].otherAttrs, {});
+        }
     });
 });
 

@@ -13,10 +13,17 @@ import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 // (CrmClientTypeRule, CommandClientTypeRule, EntityRule, FormStateRule, OutlookVersionRule, PageRule,
 // SkuRule, ValueRule) are valid in both.
 //
-// OrRule is the schema's composite: `<EnableRule Id="..."><OrRule><Or>…leaf conditions…</Or></OrRule>`
-// evaluates true if ANY nested condition does (overriding the schema's normal implicit AND across
-// multiple rules). Modeled one level deep -- `<Or>` holds leaf conditions, not further OrRules (the
-// schema doesn't nest OrRule inside Or either).
+// OrRule is the schema's composite: `<EnableRule Id="..."><OrRule><Or>…</Or><Or>…</Or>…</OrRule>`
+// evaluates true if ANY of its `<Or>` children does (overriding the schema's normal implicit AND
+// across multiple rules). Per OrEnableRuleType/OrDisplayRuleType, `<OrRule>` is a sequence of TWO OR
+// MORE sibling `<Or>` elements -- confirmed against the archived schema reference and against a live
+// environment (a single `<Or>` wrapping every clause, an earlier and incorrect guess, evaluated as an
+// AND of its children instead of an OR: one false clause made the whole rule false regardless of any
+// other clause being true, and going the other way, a rule evaluated as if only its last clause
+// existed). This editor always emits exactly one leaf condition per `<Or>` -- an `<Or>` the schema
+// allows to wrap more than one (an AND-group nested inside one OR clause) isn't representable in this
+// editor's flat per-clause list, so a rule shaped that way falls back to `Raw` on parse (see
+// parseOrRule) rather than being misread.
 //
 // Not modeled: OptionSetRule (Microsoft docs mark it "for internal use only"), and
 // CrmOutlookClientVersionRule (mentioned in the current Power Apps docs but absent from the
@@ -204,7 +211,10 @@ export function defaultRuleCondition(type: RibbonRuleConditionType): RibbonRuleC
     return defaultLeafCondition(type);
 }
 
-const ARRAY_TAGS = new Set(['CrmParameter', 'StringParameter']);
+// Or is here because OrEnableRuleType/OrDisplayRuleType requires 2+ of them under one OrRule -- forcing
+// it to always parse as an array (even a malformed/hand-edited OrRule with just one) means parseOrRule
+// never has to special-case the single-vs-array shape itself.
+const ARRAY_TAGS = new Set(['CrmParameter', 'StringParameter', 'Or']);
 
 function makeParser(): XMLParser {
     return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', parseAttributeValue: false, isArray: name => ARRAY_TAGS.has(name) });
@@ -245,7 +255,10 @@ function parseLeafConditionNode(tag: string, node: Record<string, unknown>): Rib
         for (const key of Object.keys(node)) {
             if (!key.startsWith('@_')) { continue; }
             const name = key.slice(2);
-            if (name === 'InvertResult' || names.includes(name)) { continue; }
+            // Id isn't part of any leaf condition type's schema (only Default/InvertResult are, via
+            // StandardRuleAttributes) -- discarded rather than round-tripped if one shows up anyway
+            // (e.g. hand-added, or leftover from this editor's own now-removed per-leaf Id attempt).
+            if (name === 'InvertResult' || name === 'Id' || names.includes(name)) { continue; }
             extra[name] = String(node[key]);
         }
         return extra;
@@ -402,26 +415,31 @@ function parseOrRule(rawOrRuleNode: unknown, xml: string): RibbonRuleCondition {
     const orRuleNode = asAttrNode(rawOrRuleNode);
     if (!orRuleNode) { return { type: 'Raw', xml }; }
 
-    // <OrRule> has no attributes of its own and exactly one child, <Or>.
+    // <OrRule> has no attributes of its own and one or more <Or> children (Or is forced to always
+    // parse as an array -- see ARRAY_TAGS), one per clause of the overall OR.
     const orRuleKeys = Object.keys(orRuleNode).filter(k => !k.startsWith('@_'));
     if (orRuleKeys.length !== 1 || orRuleKeys[0] !== 'Or') { return { type: 'Raw', xml }; }
 
-    const orNode = asAttrNode(orRuleNode.Or);
-    if (!orNode) { return { type: 'Raw', xml }; }
-
     const conditions: RibbonRuleLeafCondition[] = [];
-    for (const key of Object.keys(orNode)) {
-        if (key.startsWith('@_')) { return { type: 'Raw', xml }; } // <Or> has no attributes per schema
-        const rawSiblings = orNode[key];
-        const siblings = Array.isArray(rawSiblings) ? rawSiblings : [rawSiblings];
-        for (const rawSibling of siblings) {
-            const node = asAttrNode(rawSibling);
-            const leaf = node && parseLeafConditionNode(key, node);
-            // Any single nested condition we can't structurally represent bails the *whole* OrRule
-            // to Raw, rather than silently dropping just that one branch of the OR.
-            if (!leaf) { return { type: 'Raw', xml }; }
-            conditions.push(leaf);
-        }
+    for (const rawOr of orRuleNode.Or as unknown[]) {
+        const orNode = asAttrNode(rawOr);
+        if (!orNode) { return { type: 'Raw', xml }; }
+
+        const orKeys = Object.keys(orNode);
+        // <Or> has no attributes per schema, and this editor only models exactly one leaf condition
+        // per <Or> clause -- more than one (an AND-group nested inside a single OR clause, which the
+        // schema does allow) isn't representable in this editor's flat per-clause list. Either shape
+        // bails the *whole* OrRule to Raw, rather than silently dropping or misreading just that clause.
+        if (orKeys.some(k => k.startsWith('@_')) || orKeys.length !== 1) { return { type: 'Raw', xml }; }
+
+        const tag = orKeys[0];
+        const rawLeaf = orNode[tag];
+        if (Array.isArray(rawLeaf)) { return { type: 'Raw', xml }; } // more than one of the same tag inside one <Or>
+
+        const node = asAttrNode(rawLeaf);
+        const leaf = node && parseLeafConditionNode(tag, node);
+        if (!leaf) { return { type: 'Raw', xml }; }
+        conditions.push(leaf);
     }
     if (conditions.length === 0) { return { type: 'Raw', xml }; } // an empty Or is unusual/invalid
 
@@ -527,11 +545,11 @@ export function serializeRuleCondition(id: string, wrapperTag: 'EnableRule' | 'D
     if (condition.type === 'Raw') { return condition.xml; }
 
     if (condition.type === 'OrRule') {
-        const orChildren: Record<string, unknown[]> = {};
-        for (const leaf of condition.conditions) {
-            (orChildren[leaf.type] ??= []).push(leafConditionAttrs(leaf));
-        }
-        return builder.build({ [wrapperTag]: { '@_Id': id, OrRule: { Or: orChildren } } }) as string;
+        // Each clause gets its own <Or> wrapper, as a sibling under <OrRule> -- see this file's own
+        // header comment (and OrEnableRuleType/OrDisplayRuleType in the schema) for why: a single
+        // <Or> wrapping every clause evaluates as an AND of its children, not an OR of them.
+        const orElements = condition.conditions.map(leaf => ({ [leaf.type]: leafConditionAttrs(leaf) }));
+        return builder.build({ [wrapperTag]: { '@_Id': id, OrRule: { Or: orElements } } }) as string;
     }
 
     return builder.build({ [wrapperTag]: { '@_Id': id, [condition.type]: leafConditionAttrs(condition) } }) as string;
