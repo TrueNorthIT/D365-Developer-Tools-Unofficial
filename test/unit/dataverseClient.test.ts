@@ -1051,15 +1051,30 @@ describe('DataverseClient', () => {
     // ── getRibbonImageContent ──────────────────────────────────────────────
 
     describe('getRibbonImageContent', () => {
-        it('resolves a $webresource: reference via getWebResourceContentByName and wraps it as a data URI', async () => {
-            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: 'QUJD' }] }) }));
+        it('resolves a $webresource: reference via getWebResourceContentByName and wraps it as a data URI, sniffing the mime type from the actual bytes', async () => {
+            const pngBase64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: pngBase64 }] }) }));
             const client = new DataverseClient(fakeConnectionManager());
 
             const result = await client.getRibbonImageContent('$webresource:new_icon.png');
 
-            assert.strictEqual(result, 'data:image/png;base64,QUJD');
+            assert.strictEqual(result, `data:image/png;base64,${pngBase64}`);
             const [url] = fetchStub.firstCall.args;
             assert.ok(url.includes(`name eq 'new_icon.png'`));
+        });
+
+        it('sniffs SVG/text content even when the web resource name has no file extension at all -- a real Dataverse web resource name isn\'t required to end in one', async () => {
+            // Confirmed bug: guessing the mime type from the name (mimeTypeFor) defaulted a
+            // no-extension name to image/png regardless of actual content, producing a broken image
+            // in this editor's preview for an icon that rendered fine in Dynamics itself (which
+            // resolves content type from the web resource's own webresourcetype column, not its name).
+            const svgBase64 = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', 'utf8').toString('base64');
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: svgBase64 }] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+
+            const result = await client.getRibbonImageContent('$webresource:tn_RequestInformation');
+
+            assert.strictEqual(result, `data:image/svg+xml;base64,${svgBase64}`);
         });
 
         it('returns undefined when the $webresource: reference does not exist', async () => {
@@ -1097,12 +1112,13 @@ describe('DataverseClient', () => {
         // ModernImage is stored -- resolved as a web resource lookup by name, same as the
         // $webresource: case just without stripping a prefix first.
         it('resolves a bare name (e.g. a custom ModernImage) via getWebResourceContentByName', async () => {
-            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: 'QUJD' }] }) }));
+            const pngBase64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ value: [{ content: pngBase64 }] }) }));
             const client = new DataverseClient(fakeConnectionManager());
 
             const result = await client.getRibbonImageContent('new_customicon');
 
-            assert.strictEqual(result, 'data:image/png;base64,QUJD');
+            assert.strictEqual(result, `data:image/png;base64,${pngBase64}`);
             const [url] = fetchStub.firstCall.args;
             assert.ok(url.includes(`name eq 'new_customicon'`));
         });

@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { InboundMessage } from '../protocol';
 import {
   buildRibbonElementId, collectAllIds, extractNameSegment, findControl, firstUnusedName, initialState, kindSuffixFor, reducer,
@@ -26,17 +27,27 @@ export function App() {
   const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
   // What's currently being named, if anything -- see PromptRequest's own doc comment.
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<InboundMessage>) => {
       const m = e.data;
       if (!m || typeof (m as { type?: unknown }).type !== 'string') { return; }
+      if (m.type === 'ribbonModel') {
+        // useRibbonIcon (queries.ts) caches a resolved icon indefinitely -- correct for a session
+        // where nothing server-side changes, but a fresh model (a manual reload, or the "Reload"
+        // button after a publish) is exactly when a web resource created/published after its icon
+        // was first (unsuccessfully) looked up should get a fresh chance, rather than staying blank
+        // forever from a stale cached miss (the extension host's own icon cache gets the same
+        // treatment -- see loadRibbon in ribbonEditorPanel.ts).
+        void queryClient.invalidateQueries({ queryKey: ['ribbonIcon'] });
+      }
       dispatch(m);
     };
     window.addEventListener('message', onMessage);
     post({ type: 'ready' });
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [queryClient]);
 
   if (state.loading) {
     return <div id="ribbon-loading"><span className="spinner" /> Loading ribbon…</div>;

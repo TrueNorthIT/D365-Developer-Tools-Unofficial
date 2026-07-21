@@ -399,7 +399,7 @@ export class DataverseClient {
         if (ref.startsWith('$webresource:')) {
             const name = ref.slice('$webresource:'.length);
             const base64 = await this.getWebResourceContentByName(name);
-            return base64 ? `data:${mimeTypeFor(name)};base64,${base64}` : undefined;
+            return base64 ? `data:${sniffImageMimeType(base64)};base64,${base64}` : undefined;
         }
 
         if (ref.startsWith('/')) {
@@ -414,7 +414,7 @@ export class DataverseClient {
         }
 
         const base64 = await this.getWebResourceContentByName(ref);
-        return base64 ? `data:${mimeTypeFor(ref)};base64,${base64}` : undefined;
+        return base64 ? `data:${sniffImageMimeType(base64)};base64,${base64}` : undefined;
     }
 
     async createWebResource(params: { name: string; displayName: string; type: number; contentBase64: string }): Promise<string> {
@@ -765,6 +765,22 @@ const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
 function mimeTypeFor(pathOrName: string): string {
     const match = /\.[a-z0-9]+$/i.exec(pathOrName);
     return (match && MIME_TYPES_BY_EXTENSION[match[0].toLowerCase()]) || 'image/png';
+}
+
+// A web resource's `name` doesn't have to end in an extension matching its actual content (unlike a
+// /_imgs/... system path, which is a real URL and so reliably does) -- guessing the mime type from it
+// via mimeTypeFor silently mislabels anything named without one (defaulting to image/png), producing a
+// data: URI the browser can't decode and renders as a broken image, even though the exact same web
+// resource displays fine in Dynamics itself (which resolves content type from the record's own
+// webresourcetype column, not the name string). Sniffing the actual bytes -- same technique as
+// src/webview/helpers.ts's sniffRasterMimeType, for the same reason -- works regardless of naming.
+function sniffImageMimeType(base64: string): string {
+    const bytes = Buffer.from(base64, 'base64');
+    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) { return 'image/png'; }
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) { return 'image/jpeg'; }
+    if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) { return 'image/gif'; }
+    if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01 && bytes[3] === 0x00) { return 'image/x-icon'; }
+    return 'image/svg+xml'; // anything else -- ribbon icons that aren't raster are always vector/XML
 }
 
 function extractLabel(label: DataverseLabel | undefined): string {

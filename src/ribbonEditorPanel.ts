@@ -202,7 +202,8 @@ export class RibbonEditorPanel {
         let content: string | undefined;
         try {
             content = await this.client.getRibbonImageContent(ref);
-        } catch {
+        } catch (err) {
+            logError(`ribbon editor ('${this.entityLogicalName}') getIconContent('${ref}')`, err);
             content = undefined; // fall through and cache null
         }
 
@@ -213,6 +214,10 @@ export class RibbonEditorPanel {
             content = resolveFluentIconDataUri(ref);
         }
 
+        if (!content) {
+            log(`Ribbon editor ('${this.entityLogicalName}'): icon ref '${ref}' (isModern=${isModern}) did not resolve to any web resource or built-in icon`);
+        }
+
         this._iconCache.set(cacheKey, content ?? null);
         return content ?? null;
     }
@@ -220,6 +225,16 @@ export class RibbonEditorPanel {
     private async loadRibbon(): Promise<void> {
         log(`Ribbon editor ('${this.entityLogicalName}'): loading '${this.ribbonLocation}' ribbon XML…`);
         this.post({ type: 'ribbonLoading' });
+
+        // A `null` (not-found) icon lookup is only ever cached for the panel's whole lifetime, which
+        // can span many publishes -- a web resource created or published after the *first* time its
+        // icon was looked up (a very normal order of operations: reference it in the ribbon, then
+        // upload/publish the actual file) would otherwise show as missing here forever, even after it
+        // renders correctly in Dynamics itself. A real reload is the natural moment to give those
+        // another chance; a successful lookup is left alone (still safe to trust, and free to reuse).
+        for (const [key, value] of this._iconCache) {
+            if (value === null) { this._iconCache.delete(key); }
+        }
         try {
             const xml = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `D365: Loading ribbon for '${this.entityLogicalName}'…`, cancellable: false },
