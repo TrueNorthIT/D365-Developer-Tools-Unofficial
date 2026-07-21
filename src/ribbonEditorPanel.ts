@@ -82,6 +82,8 @@ export class RibbonEditorPanel {
             },
         );
 
+        panel.iconPath = vscode.Uri.joinPath(extensionUri, 'resources', 'Ribbon.svg');
+
         const editor = new RibbonEditorPanel(panel, extensionUri, client, entityLogicalName, entityDisplayName, ribbonLocation, publisherPrefix);
         RibbonEditorPanel.panels.set(key, editor);
         panel.onDidDispose(() => RibbonEditorPanel.panels.delete(key));
