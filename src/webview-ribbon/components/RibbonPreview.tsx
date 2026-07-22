@@ -13,6 +13,7 @@ interface Props {
   onSelect: (selection: Selection) => void;
   onReorderControl: (groupId: string, controlId: string, beforeControlId: string | null) => void;
   onDeleteControl: (controlId: string) => void;
+  onRemoveCustomization: (controlId: string) => void;
   onRequestPrompt: (request: PromptRequest) => void;
 }
 
@@ -21,7 +22,7 @@ const CONTROL_KINDS: RibbonControl['kind'][] = ['Button', 'SplitButton', 'Flyout
 // Renders the ribbon roughly as it appears in Dynamics itself: a tab strip, then the active tab's
 // groups as bordered boxes containing icon+label button tiles — replacing the earlier plain text
 // tree, which was unusable once real data showed up (hundreds of buttons/commands/rules at once).
-export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onDeleteControl, onRequestPrompt }: Props) {
+export function RibbonPreview({ model, location, activeTabId, onActiveTabChange, selection, onSelect, onReorderControl, onDeleteControl, onRemoveCustomization, onRequestPrompt }: Props) {
   const [ctxMenu, setCtxMenu] = useState<{ control: RibbonControl; x: number; y: number } | null>(null);
   const [groupCtxMenu, setGroupCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [tabStripCtxMenu, setTabStripCtxMenu] = useState<{ x: number; y: number } | null>(null);
@@ -79,6 +80,7 @@ export function RibbonPreview({ model, location, activeTabId, onActiveTabChange,
           y={ctxMenu.y}
           onClose={() => setCtxMenu(null)}
           onDelete={onDeleteControl}
+          onRemoveCustomization={onRemoveCustomization}
         />
       )}
 
@@ -357,18 +359,35 @@ function statusSuffix(status: RibbonNodeStatus): string {
 // as a real removal (see mergeRibbonDiffXml's removedCustomActionIds) or a HideCustomAction is only
 // knowable once the entity's real existing diff is fetched at publish time -- not something this
 // editor can predict from the loaded model, so it's no longer something the button-click UI guesses at.
-function ButtonContextMenu({ control, x, y, onClose, onDelete }: {
+function ButtonContextMenu({ control, x, y, onClose, onDelete, onRemoveCustomization }: {
   control: RibbonControl;
   x: number;
   y: number;
   onClose: () => void;
   onDelete: (controlId: string) => void;
+  onRemoveCustomization: (controlId: string) => void;
 }) {
+  // "Delete" hides the control outright (an explicit HideCustomAction, on top of stripping any
+  // existing customization -- see hideControl/deleteOrHideControl in ribbonState.ts). "Remove
+  // Customisation" is a deliberately narrower, separate action: strip whatever customization(s)
+  // exist for this element -- this tool's own or another tool's -- WITHOUT hiding it, letting the
+  // underlying base/OOB definition show through untouched. Confirmed live that these are genuinely
+  // different outcomes, not two names for the same thing: Ribbon Workbench's own "Delete" (for an
+  // already-customized element) only does the latter, and a button "deleted" that way stayed fully
+  // visible, just via its original base definition instead of the (redundant) override. Neither
+  // option is offered for a control added this session (status 'added') -- there's no existing
+  // server-side customization to revert, and "Delete" for that case just removes it outright instead
+  // of toggling a status (see deleteOrHideControl).
   return (
     <PositionedMenu x={x} y={y} onClose={onClose}>
       <button type="button" onClick={() => { onClose(); onDelete(control.id); }}>
         {control.status === 'deleted' ? 'Restore' : 'Delete'}
       </button>
+      {control.status !== 'added' && control.status !== 'deleted' && (
+        <button type="button" onClick={() => { onClose(); onRemoveCustomization(control.id); }}>
+          {control.status === 'reverted' ? 'Restore' : 'Remove Customisation'}
+        </button>
+      )}
     </PositionedMenu>
   );
 }

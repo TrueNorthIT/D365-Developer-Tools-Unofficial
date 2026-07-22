@@ -320,6 +320,10 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) img.ribbon-icon-slot.
 .ribbon-tab.status-added, .ribbon-group.status-added, .ribbon-button-tile.status-added { border-left: 3px solid var(--vscode-gitDecoration-addedResourceForeground, #81b88b); }
 .ribbon-tab.status-modified, .ribbon-group.status-modified, .ribbon-button-tile.status-modified { border-left: 3px solid var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
 .ribbon-tab.status-deleted, .ribbon-group.status-deleted, .ribbon-button-tile.status-deleted { border-left: 3px solid var(--vscode-gitDecoration-deletedResourceForeground, #c74e39); opacity: 0.6; text-decoration: line-through; }
+/* 'reverted' only ever applies to a control -- see RibbonControl.status's own doc comment. Distinct
+   from status-deleted on purpose: the control isn't being hidden, so no strikethrough -- only its
+   customization is being stripped, letting the base/OOB definition show through untouched. */
+.ribbon-button-tile.status-reverted { border-left: 3px solid var(--vscode-charts-blue, #3794ff); opacity: 0.8; }
 
 /* ── Node editor ──
    Fixed width rather than flexing with .ribbon-preview -- it used to grow/shrink based on whatever

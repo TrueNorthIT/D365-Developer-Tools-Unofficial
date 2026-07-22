@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { buildRibbonDiffFragments, buildRibbonDiffXml, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from '../../src/ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, findDuplicateCustomActionTargets, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from '../../src/ribbon/ribbonXmlBuilder';
 import type { RibbonControl, RibbonModel } from '../../src/ribbon/ribbonModel';
 
 function baseModel(): RibbonModel {
@@ -144,6 +144,27 @@ describe('buildRibbonDiffXml', () => {
         const xml = buildRibbonDiffXml(baseModel());
         assert.match(xml, /<HideCustomAction Id="removed_button\.Hide" Location="grp\.currency\.Controls\._children" CommandUIElementId="removed_button" \/>/);
         assert.doesNotMatch(xml, /Id="removed_button\.Custom"/);
+    });
+
+    it("emits NEITHER a HideCustomAction NOR a replacement CustomAction for a 'reverted' control -- the whole point is to let the base definition show through untouched", () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'reverted_button', label: 'Reverted', toolTipTitle: '', toolTipDescription: '', status: 'reverted' },
+        );
+        const fragments = buildRibbonDiffFragments(model);
+        assert.deepStrictEqual(fragments.touchedElementIds.includes('reverted_button'), true, 'must still be reported so an existing competing CustomAction gets stripped on merge');
+        assert.doesNotMatch(buildRibbonDiffXml(model), /reverted_button\.Hide/);
+        assert.doesNotMatch(buildRibbonDiffXml(model), /Id="reverted_button\.Custom"/);
+    });
+
+    it("omits a 'reverted' control from a wholesale group re-serialize too, so it isn't redeclared as part of an unrelated sibling edit", () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].status = 'modified';
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'reverted_button', label: 'Reverted', toolTipTitle: '', toolTipDescription: '', status: 'reverted' },
+        );
+        const xml = buildRibbonDiffXml(model);
+        assert.doesNotMatch(xml, /Id="reverted_button"/);
     });
 
     it('emits a brand-new tab as a single CustomAction anchored at Mscrm.Tabs._children, nesting its groups/controls', () => {
@@ -398,6 +419,89 @@ describe('mergeRibbonDiffXml', () => {
         assert.match(xml, /<HideCustomAction Id="removed_button\.Hide"/);
     });
 
+    it('strips an existing CustomAction redeclaring the same element even when another tool named its wrapper differently -- confirmed against a live org where a Ribbon-Workbench-created "{prefix}.{ElementId}.CustomAction" wrapper kept re-declaring a button this session hides, defeating the Hide', () => {
+        const diffFromAnotherTool = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="tn.Mscrm.SubGrid.contact.NewRecord.CustomAction" Location="grp.currency.Controls._children" Sequence="30">
+      <CommandUIDefinition>
+        <Button Id="Mscrm.SubGrid.contact.NewRecord" Command="Mscrm.NewRecordFromGrid" LabelText="New" Sequence="30" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+  <Templates />
+  <CommandDefinitions></CommandDefinitions>
+  <RuleDefinitions>
+    <TabDisplayRules />
+    <DisplayRules></DisplayRules>
+    <EnableRules></EnableRules>
+  </RuleDefinitions>
+  <HideCustomActions></HideCustomActions>
+</RibbonDiffXml>`;
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'Mscrm.SubGrid.contact.NewRecord', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'deleted' },
+        );
+        const xml = mergeRibbonDiffXml(diffFromAnotherTool, model);
+        assert.doesNotMatch(xml, /tn\.Mscrm\.SubGrid\.contact\.NewRecord\.CustomAction/, 'the other tool\'s wrapper must be stripped, not left redeclaring the hidden element');
+        assert.match(xml, /<HideCustomAction Id="Mscrm\.SubGrid\.contact\.NewRecord\.Hide" .*CommandUIElementId="Mscrm\.SubGrid\.contact\.NewRecord"/);
+    });
+
+    it('leaves an existing CustomAction from another tool alone when it declares a DIFFERENT element than anything touched this session', () => {
+        const diffFromAnotherTool = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="tn.Mscrm.SubGrid.contact.Edit.CustomAction" Location="grp.currency.Controls._children" Sequence="80">
+      <CommandUIDefinition>
+        <Button Id="Mscrm.SubGrid.contact.Edit" Command="Mscrm.EditSelectedRecord" LabelText="Edit" Sequence="80" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+  <Templates />
+  <CommandDefinitions></CommandDefinitions>
+  <RuleDefinitions>
+    <TabDisplayRules />
+    <DisplayRules></DisplayRules>
+    <EnableRules></EnableRules>
+  </RuleDefinitions>
+  <HideCustomActions></HideCustomActions>
+</RibbonDiffXml>`;
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'Mscrm.SubGrid.contact.NewRecord', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'deleted' },
+        );
+        const xml = mergeRibbonDiffXml(diffFromAnotherTool, model);
+        assert.match(xml, /tn\.Mscrm\.SubGrid\.contact\.Edit\.CustomAction/, 'unrelated existing customization must be left alone');
+    });
+
+    it("'reverted' strips a competing customization from another tool WITHOUT hiding the element -- the actual fix for Ribbon Workbench's own \"Delete\" only doing the strip, never a hide", () => {
+        const diffFromAnotherTool = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="tn.Mscrm.SubGrid.contact.NewRecord.CustomAction" Location="grp.currency.Controls._children" Sequence="30">
+      <CommandUIDefinition>
+        <Button Id="Mscrm.SubGrid.contact.NewRecord" Command="Mscrm.NewRecordFromGrid" LabelText="New" Sequence="30" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+  <Templates />
+  <CommandDefinitions></CommandDefinitions>
+  <RuleDefinitions>
+    <TabDisplayRules />
+    <DisplayRules></DisplayRules>
+    <EnableRules></EnableRules>
+  </RuleDefinitions>
+  <HideCustomActions></HideCustomActions>
+</RibbonDiffXml>`;
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'Mscrm.SubGrid.contact.NewRecord', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'reverted' },
+        );
+        const xml = mergeRibbonDiffXml(diffFromAnotherTool, model);
+        assert.doesNotMatch(xml, /tn\.Mscrm\.SubGrid\.contact\.NewRecord\.CustomAction/, 'the competing customization must be stripped');
+        // baseModel() has its own unrelated modified/deleted controls that legitimately produce their
+        // own HideCustomActions -- check specifically that THIS element isn't one of them, rather than
+        // asserting no HideCustomAction exists anywhere in the document.
+        assert.doesNotMatch(xml, /CommandUIElementId="Mscrm\.SubGrid\.contact\.NewRecord"/, 'must NOT hide it -- reverted means "let the base show", not "hide it"');
+    });
+
     it('still just Hides a deleted control with no prior CustomAction to remove (e.g. genuine base ribbon), without erroring', () => {
         const model = baseModel();
         model.tabs[0].groups[0].controls.push(
@@ -464,5 +568,51 @@ describe('findInvalidFlyoutAnchors', () => {
         model.tabs[0].groups[0].status = 'modified'; // e.g. group-level touch from a sibling reorder
         const ids = findInvalidFlyoutAnchors(buildRibbonDiffFragments(model));
         assert.deepStrictEqual(ids, ['Mscrm.SubGrid.tn_regulation.ChangeDataSetControlButton']);
+    });
+});
+
+describe('findDuplicateCustomActionTargets', () => {
+    it('flags an element declared by two different CustomAction wrappers -- e.g. this tool\'s own and a separately-named one from another tool', () => {
+        const xml = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="tn.tn_regulation.new.button.Custom" Location="grp.Controls._children" Sequence="20">
+      <CommandUIDefinition>
+        <Button Id="tn.tn_regulation.new.button" LabelText="New" Sequence="20" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+    <CustomAction Id="tn.tn_regulation.new.button.CustomAction" Location="grp.Controls._children" Sequence="20">
+      <CommandUIDefinition>
+        <Button Id="tn.tn_regulation.new.button" LabelText="New" Sequence="20" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+</RibbonDiffXml>`;
+        const duplicates = findDuplicateCustomActionTargets(xml);
+        assert.deepStrictEqual(duplicates, [
+            { elementId: 'tn.tn_regulation.new.button', wrapperIds: ['tn.tn_regulation.new.button.Custom', 'tn.tn_regulation.new.button.CustomAction'] },
+        ]);
+    });
+
+    it('does not flag elements declared exactly once', () => {
+        const xml = `<RibbonDiffXml>
+  <CustomActions>
+    <CustomAction Id="a.Custom" Location="grp.Controls._children" Sequence="10">
+      <CommandUIDefinition>
+        <Button Id="a" LabelText="A" Sequence="10" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+    <CustomAction Id="b.Custom" Location="grp.Controls._children" Sequence="20">
+      <CommandUIDefinition>
+        <Button Id="b" LabelText="B" Sequence="20" TemplateAlias="o2" />
+      </CommandUIDefinition>
+    </CustomAction>
+  </CustomActions>
+</RibbonDiffXml>`;
+        assert.deepStrictEqual(findDuplicateCustomActionTargets(xml), []);
+    });
+
+    it('returns an empty array for an empty or missing CustomActions section', () => {
+        assert.deepStrictEqual(findDuplicateCustomActionTargets('<RibbonDiffXml><CustomActions /></RibbonDiffXml>'), []);
+        assert.deepStrictEqual(findDuplicateCustomActionTargets('<RibbonDiffXml></RibbonDiffXml>'), []);
     });
 });

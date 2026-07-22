@@ -2,7 +2,9 @@
 // (parses/builds it) and the ribbon editor webview (renders/edits it as plain data, no XML awareness).
 // Kept dependency-free so it can be imported by both sides without pulling in `vscode` or an XML lib.
 
-export type RibbonNodeStatus = 'unchanged' | 'added' | 'modified' | 'deleted';
+// 'reverted' only ever applies to a control -- see RibbonControl.status and ribbonState.ts's
+// removeCustomization for what it means and why it's a distinct thing from 'deleted'.
+export type RibbonNodeStatus = 'unchanged' | 'added' | 'modified' | 'deleted' | 'reverted';
 
 export interface RibbonControl {
     kind: 'Button' | 'SplitButton' | 'FlyoutAnchor' | 'MenuSection';
@@ -26,6 +28,15 @@ export interface RibbonControl {
     sequence?: string;
     /** FlyoutAnchor > Menu > MenuSection > Controls, or a MenuSection's own Controls. */
     controls?: RibbonControl[];
+    /** 'reverted' means "strip any existing CustomAction(s) declaring this element -- this tool's
+     *  own, another tool's, doesn't matter -- but do NOT hide it": the underlying base/OOB definition
+     *  shows through untouched, same as if it had never been customized at all. Deliberately distinct
+     *  from 'deleted' (which does the same stripping AND adds an explicit HideCustomAction) -- Ribbon
+     *  Workbench's own "Delete" (for an already-customized element) only does the former, which
+     *  confirmed-live turned out NOT to hide anything, just revert to the OOB default appearing
+     *  again. This tool exposes both as separate actions rather than conflating them: "hide this" and
+     *  "remove whatever customization(s) exist for this, whoever made them" are genuinely different
+     *  intents. See removeCustomization (ribbonState.ts). */
     status: RibbonNodeStatus;
 }
 

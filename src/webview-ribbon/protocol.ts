@@ -6,7 +6,9 @@
 // A plain, JSON-serializable mirror of src/ribbon/ribbonModel.ts. Kept webview-local (no `vscode`
 // or extension-host imports) so the webview tsconfig doesn't need to resolve Node types.
 
-export type RibbonNodeStatus = 'unchanged' | 'added' | 'modified' | 'deleted';
+// 'reverted' only ever applies to a control -- see ribbonModel.ts's copy of this type, and
+// removeCustomization in ribbonState.ts, for the full explanation.
+export type RibbonNodeStatus = 'unchanged' | 'added' | 'modified' | 'deleted' | 'reverted';
 
 export interface RibbonControl {
   kind: 'Button' | 'SplitButton' | 'FlyoutAnchor' | 'MenuSection';

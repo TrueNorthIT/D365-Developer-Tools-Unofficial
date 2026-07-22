@@ -38,13 +38,19 @@ export interface RibbonDiffFragments {
     commandDefinitions: string[];
     enableRules: string[];
     displayRules: string[];
-    /** Ids of CustomActions (`{node.id}.Custom`) that should be dropped from an existing diff outright
-     *  when merging, rather than left behind as inert dead weight -- one per tab/group/control marked
-     *  'deleted' this session. A HideCustomAction is still emitted for the same node regardless (see
-     *  the main loop below), since a 'deleted' node might be genuine base ribbon with no CustomAction
-     *  to remove in the first place -- this list only matters when one actually exists. See
-     *  mergeRibbonDiffXml. */
-    removedCustomActionIds: string[];
+    /** Ids of the actual ribbon elements (a Tab/Group/Button/etc.'s own Id, NOT any CustomAction
+     *  wrapper's) that this session is hiding or replacing -- one per tab/group/control marked
+     *  'modified' or 'deleted'. This is deliberately NOT "the CustomAction Id we'd expect to find" --
+     *  a different tool (Ribbon Workbench, hand-editing) generates its own wrapper Id for the same
+     *  element -- e.g. "{prefix}.{ElementId}.CustomAction" instead of this tool's "{ElementId}.Custom"
+     *  -- so identifying what to remove by assuming any particular wrapper-Id convention silently
+     *  leaves that other tool's competing CustomAction in place. Confirmed against a live org: a
+     *  HideCustomAction alongside an untouched, differently-Id'd CustomAction still re-declaring the
+     *  exact same element never actually hid it. mergeRibbonDiffXml (mergeCustomActionsSection) matches
+     *  purely by inspecting what element a CustomAction's CommandUIDefinition actually declares, never
+     *  by pattern-matching its own wrapper Id -- the one thing that's guaranteed stable regardless of
+     *  which tool produced it. */
+    touchedElementIds: string[];
     /** `<LocLabel>` fragments for any literal label/title/tooltip text emitted above -- see labelRef. */
     locLabels: string[];
     /** LocLabel Id -> the literal text it was generated from -- a plain-object mirror of `locLabels`
@@ -60,7 +66,7 @@ export interface RibbonDiffFragments {
 export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragments {
     const customActions: string[] = [];
     const hideCustomActions: string[] = [];
-    const removedCustomActionIds: string[] = [];
+    const touchedElementIds: string[] = [];
     const labels: LabelAccumulator = { fragments: [], resolved: {} };
     let sequence = 100;
 
@@ -81,13 +87,14 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
         }
         if (tab.status === 'modified') {
             hideCustomActions.push(hideCustomAction(tab.id, 'Mscrm.Tabs._children'));
+            touchedElementIds.push(tab.id);
             const seq = seqOf(tab);
             customActions.push(customAction(`${tab.id}.Custom`, 'Mscrm.Tabs._children', seq, serializeTab(tab, seq, seqOf, labels)));
             continue;
         }
         if (tab.status === 'deleted') {
             hideCustomActions.push(hideCustomAction(tab.id, 'Mscrm.Tabs._children'));
-            removedCustomActionIds.push(`${tab.id}.Custom`);
+            touchedElementIds.push(tab.id);
             continue;
         }
 
@@ -100,13 +107,14 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
             }
             if (group.status === 'modified') {
                 hideCustomActions.push(hideCustomAction(group.id, groupsLocation));
+                touchedElementIds.push(group.id);
                 const seq = seqOf(group);
                 customActions.push(customAction(`${group.id}.Custom`, groupsLocation, seq, serializeGroup(group, seq, seqOf, labels)));
                 continue;
             }
             if (group.status === 'deleted') {
                 hideCustomActions.push(hideCustomAction(group.id, groupsLocation));
-                removedCustomActionIds.push(`${group.id}.Custom`);
+                touchedElementIds.push(group.id);
                 continue;
             }
 
@@ -117,11 +125,17 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
                     customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, labels)));
                 } else if (control.status === 'modified') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
+                    touchedElementIds.push(control.id);
                     const seq = seqOf(control);
                     customActions.push(customAction(`${control.id}.Custom`, controlsLocation, seq, serializeControl(control, seq, labels)));
                 } else if (control.status === 'deleted') {
                     hideCustomActions.push(hideCustomAction(control.id, controlsLocation));
-                    removedCustomActionIds.push(`${control.id}.Custom`);
+                    touchedElementIds.push(control.id);
+                } else if (control.status === 'reverted') {
+                    // Strips any existing CustomAction(s) declaring this element (see
+                    // mergeCustomActionsSection) WITHOUT a HideCustomAction -- the whole point of
+                    // 'reverted' vs 'deleted'. See RibbonControl.status's own doc comment.
+                    touchedElementIds.push(control.id);
                 }
             }
         }
@@ -134,7 +148,7 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
     const displayRules = model.displayRules.filter(r => r.status === 'added' || r.status === 'modified').map(r => r.xml.trim());
 
     return {
-        customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, removedCustomActionIds,
+        customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, touchedElementIds,
         locLabels: labels.fragments, resolvedLabels: labels.resolved,
     };
 }
@@ -235,9 +249,9 @@ function assembleRibbonDiffXml(
 export function mergeRibbonDiffXml(existingRibbonDiffXml: string, model: RibbonModel): string {
     const f = buildRibbonDiffFragments(model);
 
-    // Deleted nodes get their own CustomAction (if one exists) stripped outright, on top of the
-    // ordinary Id-collision exclusion below -- see removedCustomActionIds' own doc comment.
-    const customActions = mergeSection(existingRibbonDiffXml, 'CustomActions', f.customActions, new Set(f.removedCustomActionIds));
+    // Strips any EXISTING CustomAction -- however it's named, from whatever tool created it -- that
+    // redeclares an element this session is hiding/replacing; see touchedElementIds' own doc comment.
+    const customActions = mergeCustomActionsSection(existingRibbonDiffXml, f.customActions, new Set(f.touchedElementIds));
     const hideCustomActions = mergeSection(existingRibbonDiffXml, 'HideCustomActions', f.hideCustomActions);
     const commandDefinitions = mergeSection(existingRibbonDiffXml, 'CommandDefinitions', f.commandDefinitions);
 
@@ -296,6 +310,68 @@ function mergeSection(containerXml: string, sectionTag: string, newFragments: st
         .filter(f => !f.id || (!newIds.has(f.id) && !extraExcludeIds?.has(f.id)))
         .map(f => f.xml);
     return [...kept, ...newFragments];
+}
+
+// Same idea as mergeSection, but for CustomActions specifically: excludes an existing fragment whose
+// CommandUIDefinition declares the SAME ribbon element (by that element's own Id) as one this session
+// is hiding/replacing -- regardless of what the wrapping CustomAction's own Id happens to be.
+// Deliberately does NOT also exclude by matching the wrapper CustomAction's own Id against some
+// assumed naming convention (this tool's "{ElementId}.Custom" or anything else) -- a different tool
+// (Ribbon Workbench, hand-editing) names its own CustomAction wrapper however it likes (e.g.
+// "{prefix}.{ElementId}.CustomAction"), so identifying what to remove by wrapper-Id pattern-matching
+// leaves that other tool's CustomAction in place, still redeclaring the exact element this session
+// just told Dataverse to hide -- confirmed against a live org, where that competing redeclaration
+// beat this session's own HideCustomAction outright. Matching purely by the element a CustomAction
+// actually declares is the only thing that's stable regardless of which tool produced it. `newIds` is
+// still checked to avoid literal duplicate wrapper Ids in the OUTPUT (a real schema concern,
+// independent of whose element it is), not to identify anything. See touchedElementIds' own doc
+// comment on RibbonDiffFragments.
+function mergeCustomActionsSection(containerXml: string, newFragments: string[], touchedElementIds: Set<string>): string[] {
+    const existingInner = extractElementInner(containerXml, 'CustomActions') ?? '';
+    const newIds = new Set(newFragments.map(extractId).filter((id): id is string => !!id));
+    const kept = splitTopLevelElements(existingInner)
+        .filter(f => {
+            if (f.id && newIds.has(f.id)) { return false; }
+            const innerId = extractInnerElementId(f.xml);
+            return !(innerId && touchedElementIds.has(innerId));
+        })
+        .map(f => f.xml);
+    return [...kept, ...newFragments];
+}
+
+// Finds the Id of the actual ribbon element (Tab/Group/Button/SplitButton/FlyoutAnchor/etc.) a
+// <CustomAction>'s <CommandUIDefinition> declares -- distinct from the CustomAction's own Id (see
+// mergeCustomActionsSection). A CommandUIDefinition always wraps exactly one such element, so its Id
+// is simply the first Id attribute found inside it.
+function extractInnerElementId(customActionXml: string): string | undefined {
+    const inner = extractElementInner(customActionXml, 'CommandUIDefinition');
+    if (!inner) { return undefined; }
+    return /\bId="([^"]*)"/.exec(inner)?.[1];
+}
+
+// Detects an existing diff where the SAME ribbon element is already declared by more than one
+// CustomAction wrapper -- exactly the situation that broke publishing in a real org: this tool's own
+// customization for a button, and a completely separate wrapper Ribbon Workbench created for the
+// exact same button, sitting side by side (neither tool recognized the other's, for the same reason
+// mergeCustomActionsSection can't rely on wrapper-Id conventions -- see its own doc comment). This
+// can't be prevented at the point the OTHER tool creates its duplicate; the best this editor can do
+// is surface it clearly the next time it reads the entity's raw diff (publish time, via
+// ribbonEditorPanel.ts's runPublish, which already fetches it to merge into), instead of leaving the
+// user to discover it later as a mysterious publish failure in a different tool or a customization
+// that silently doesn't take effect.
+export function findDuplicateCustomActionTargets(existingRibbonDiffXml: string): Array<{ elementId: string; wrapperIds: string[] }> {
+    const existingInner = extractElementInner(existingRibbonDiffXml, 'CustomActions') ?? '';
+    const wrapperIdsByElement = new Map<string, string[]>();
+    for (const fragment of splitTopLevelElements(existingInner)) {
+        const elementId = extractInnerElementId(fragment.xml);
+        if (!elementId || !fragment.id) { continue; }
+        const wrapperIds = wrapperIdsByElement.get(elementId) ?? [];
+        wrapperIds.push(fragment.id);
+        wrapperIdsByElement.set(elementId, wrapperIds);
+    }
+    return [...wrapperIdsByElement.entries()]
+        .filter(([, wrapperIds]) => wrapperIds.length > 1)
+        .map(([elementId, wrapperIds]) => ({ elementId, wrapperIds }));
 }
 
 // Returns the inner text of the first `<tag>...</tag>` (or '' for a self-closing `<tag />`) found
@@ -458,7 +534,11 @@ function controlToObj(control: RibbonControl, labels: LabelAccumulator, seq?: nu
 function controlsToObj(controls: RibbonControl[], labels: LabelAccumulator, seqOf?: SeqOf): Record<string, unknown> | undefined {
     const grouped: Record<string, unknown[]> = {};
     for (const control of controls) {
-        if (control.status === 'deleted') { continue; }
+        // 'reverted' is omitted here for the same reason 'deleted' is: if the ENCLOSING group/tab
+        // also gets wholesale re-serialized (e.g. an unrelated edit), redeclaring a 'reverted' control
+        // as part of that would defeat the entire point of reverting it -- see RibbonControl.status's
+        // own doc comment.
+        if (control.status === 'deleted' || control.status === 'reverted') { continue; }
         (grouped[control.kind] ??= []).push(controlToObj(control, labels, seqOf?.(control)));
     }
     return Object.keys(grouped).length ? grouped : undefined;

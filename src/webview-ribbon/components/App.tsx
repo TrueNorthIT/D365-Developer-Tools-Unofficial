@@ -162,6 +162,7 @@ export function App() {
           onSelect={selection => dispatch({ type: 'local/select', selection })}
           onReorderControl={(groupId, controlId, beforeControlId) => dispatch({ type: 'local/reorderControl', groupId, controlId, beforeControlId })}
           onDeleteControl={controlId => dispatch({ type: 'local/deleteControl', controlId })}
+          onRemoveCustomization={controlId => dispatch({ type: 'local/removeCustomization', controlId })}
           onRequestPrompt={requestPrompt}
         />
         <NodeEditor model={model} selection={state.selection} dispatch={dispatch} onRequestPrompt={requestPrompt} />

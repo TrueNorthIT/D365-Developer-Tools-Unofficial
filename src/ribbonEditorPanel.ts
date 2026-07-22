@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import type { DataverseClient, Publisher, RibbonLocationFilter, RibbonMetadataGenerationStatus } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
-import { buildRibbonDiffFragments, buildRibbonDiffXml, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from './ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, findDuplicateCustomActionTargets, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
 import { buildRibbonSolutionZip, hasRibbonChanges } from './ribbon/solutionPackage';
 import type { RibbonModel } from './ribbon/ribbonModel';
@@ -352,6 +352,30 @@ export class RibbonEditorPanel {
                 'Publish Anyway',
             );
             if (proceed !== 'Publish Anyway') { return; }
+        }
+
+        // Can't stop another tool (Ribbon Workbench, hand-editing) from creating a competing
+        // CustomAction for something this tool already customizes -- that happens entirely outside
+        // this extension's own publish. This is the next best thing: since the entity's raw existing
+        // diff was just read anyway, check it for exactly that pattern and surface it now rather than
+        // leaving the user to discover it later as a mysterious failure in a different tool, or a
+        // customization that silently doesn't take effect. See findInvalidFlyoutAnchors' own doc
+        // comment above for the same "checked before anything else" reasoning.
+        if (existingRibbonDiffXml) {
+            const duplicates = findDuplicateCustomActionTargets(existingRibbonDiffXml);
+            if (duplicates.length) {
+                const summary = duplicates.map(d => `${d.elementId} (${d.wrapperIds.join(', ')})`).join('; ');
+                const proceed = await vscode.window.showWarningMessage(
+                    `D365: '${entityLabel}' already has more than one CustomAction declaring the same element -- ${summary}. ` +
+                    `This usually means another tool (Ribbon Workbench, hand-editing) created its own customization for ` +
+                    `something this tool -- or another tool -- already customizes. Whichever one "wins" isn't reliable, and ` +
+                    `it can silently break hiding/publishing for that element. Consider removing the duplicate(s) before ` +
+                    `relying on this. Continue publishing anyway?`,
+                    { modal: true },
+                    'Publish Anyway',
+                );
+                if (proceed !== 'Publish Anyway') { return; }
+            }
         }
 
         // Merges this session's edits into the entity's actual existing diff rather than rebuilding

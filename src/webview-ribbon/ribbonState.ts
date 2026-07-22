@@ -171,7 +171,8 @@ export type LocalAction =
   | { type: 'local/removeRuleFromCommand'; commandId: string; ruleType: 'enable' | 'display'; ruleId: string }
   | { type: 'local/deleteSelected' }
   | { type: 'local/reorderControl'; groupId: string; controlId: string; beforeControlId: string | null }
-  | { type: 'local/deleteControl'; controlId: string };
+  | { type: 'local/deleteControl'; controlId: string }
+  | { type: 'local/removeCustomization'; controlId: string };
 
 export type Action = InboundMessage | LocalAction;
 
@@ -359,6 +360,10 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
             deleteOrHideControl(model, action.controlId);
             break;
         }
+        case 'local/removeCustomization': {
+            removeCustomization(model, action.controlId);
+            break;
+        }
         default:
             break;
     }
@@ -404,6 +409,16 @@ function hideControl(model: RibbonModel, controlId: string): void {
     const control = findControl(model, controlId);
     if (!control) { return; }
     control.status = control.status === 'deleted' ? 'unchanged' : 'deleted';
+}
+
+// Toggles 'reverted' <-> 'unchanged' -- see RibbonControl.status's own doc comment for exactly what
+// 'reverted' means and why it's offered as a separate action from hideControl/deleteOrHideControl,
+// rather than folded into the same "Delete" toggle. No-op for a control added this session (status
+// 'added'): there's no existing server-side customization to revert in the first place.
+function removeCustomization(model: RibbonModel, controlId: string): void {
+    const control = findControl(model, controlId);
+    if (!control || control.status === 'added') { return; }
+    control.status = control.status === 'reverted' ? 'unchanged' : 'reverted';
 }
 
 // Removes a control added this session entirely -- only called for a control that IS 'added' this

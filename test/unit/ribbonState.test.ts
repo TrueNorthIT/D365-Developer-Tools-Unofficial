@@ -520,3 +520,39 @@ describe('ribbonState reducer: deleteControl (delete-or-hide, whichever applies)
         assert.deepStrictEqual(next.model, state.model);
     });
 });
+
+describe("ribbonState reducer: removeCustomization (distinct from delete/hide -- strips a customization without hiding the element)", () => {
+    it("marks an unchanged control 'reverted', not 'deleted'", () => {
+        const next = reducer(stateWithModel(baseModel()), { type: 'local/removeCustomization', controlId: 'btn.no.command' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        assert.strictEqual(control.status, 'reverted');
+    });
+
+    it('restores a reverted control back to unchanged when the same action is dispatched again', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[0].status = 'reverted';
+        const next = reducer(stateWithModel(model), { type: 'local/removeCustomization', controlId: 'btn.no.command' });
+        const control = next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.no.command')!;
+        assert.strictEqual(control.status, 'unchanged');
+    });
+
+    it('marks a modified control reverted, discarding its in-progress edit, same as deleteControl does', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls[1].status = 'modified';
+        const next = reducer(stateWithModel(model), { type: 'local/removeCustomization', controlId: 'btn.with.command' });
+        assert.strictEqual(next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.with.command')!.status, 'reverted');
+    });
+
+    it('does nothing to a control added this session -- there is no existing customization to revert', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added' });
+        const next = reducer(stateWithModel(model), { type: 'local/removeCustomization', controlId: 'btn.new' });
+        assert.strictEqual(next.model!.tabs[0].groups[0].controls.find(c => c.id === 'btn.new')!.status, 'added');
+    });
+
+    it('does nothing when the control id is not found', () => {
+        const state = stateWithModel(baseModel());
+        const next = reducer(state, { type: 'local/removeCustomization', controlId: 'does.not.exist' });
+        assert.deepStrictEqual(next.model, state.model);
+    });
+});
