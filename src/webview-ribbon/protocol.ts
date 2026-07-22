@@ -29,6 +29,10 @@ export interface RibbonGroup {
   id: string;
   title: string;
   sequence?: string;
+  /** See ribbonModel.ts's copy of this type for the full explanation -- preserved for an existing
+   *  group, undefined for one added this session (buildRibbonDiffFragments defaults it then). */
+  template?: string;
+  command?: string;
   controls: RibbonControl[];
   status: RibbonNodeStatus;
 }

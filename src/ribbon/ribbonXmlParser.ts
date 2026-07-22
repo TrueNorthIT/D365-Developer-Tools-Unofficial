@@ -132,6 +132,8 @@ function parseGroups(groupsNode: Record<string, unknown> | undefined, locLabels:
         id: attr(group, 'Id') ?? '',
         title: resolveTitle(group, locLabels),
         sequence: attr(group, 'Sequence'),
+        template: attr(group, 'Template'),
+        command: attr(group, 'Command'),
         controls: parseControls(asObj(group.Controls), locLabels),
         status: 'unchanged' as const,
     }));

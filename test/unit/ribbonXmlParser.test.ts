@@ -7,7 +7,7 @@ const FIXTURE = `
     <Tabs>
       <Tab Id="Mscrm.form.account.MainTab" Title="Home" Sequence="100">
         <Groups>
-          <Group Id="grp.currency" Title="My Group" Sequence="10">
+          <Group Id="grp.currency" Title="My Group" Sequence="10" Template="Mscrm.Templates.Flexible2" Command="Mscrm.Enabled">
             <Controls>
               <Button Id="new_button" LabelText="$LocLabels:loc1" ToolTipTitle="Click" ToolTipDescription="Does a thing" Command="cmd1" Image16by16="$webresource:new_icon16.png" Image32by32="$webresource:new_icon32.png" ModernImage="Refresh" Sequence="20" />
               <FlyoutAnchor Id="new_flyout" LabelText="More">
@@ -82,6 +82,8 @@ describe('parseRibbonXml', () => {
         const group = tab.groups[0];
         assert.strictEqual(group.id, 'grp.currency');
         assert.strictEqual(group.title, 'My Group');
+        assert.strictEqual(group.template, 'Mscrm.Templates.Flexible2');
+        assert.strictEqual(group.command, 'Mscrm.Enabled');
 
         assert.strictEqual(group.controls.length, 2);
         const button = group.controls[0];

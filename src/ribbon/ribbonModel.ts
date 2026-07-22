@@ -34,6 +34,15 @@ export interface RibbonGroup {
     title: string;
     /** See RibbonControl.sequence -- same idea, one level up (position among sibling groups in a tab). */
     sequence?: string;
+    /** This group's Template attribute (e.g. "Mscrm.Templates.Flexible2") -- every real group in the
+     *  effective ribbon carries one; it's what actually gives a group's Controls somewhere to render
+     *  into. Preserved verbatim for an existing group re-serialized on edit/move; undefined for a
+     *  group added this session, which has no original to preserve -- see buildRibbonDiffFragments'
+     *  groupToObj, which falls back to a known-good default only in that case. */
+    template?: string;
+    /** This group's own Command attribute -- gates the group's own visibility/enablement, distinct
+     *  from any individual control's Command. Same preserve-or-default treatment as `template`. */
+    command?: string;
     controls: RibbonControl[];
     status: RibbonNodeStatus;
 }

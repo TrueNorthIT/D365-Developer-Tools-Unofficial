@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import type { DataverseClient, Publisher, RibbonLocationFilter, RibbonMetadataGenerationStatus } from './dataverseClient';
 import { parseRibbonXml } from './ribbon/ribbonXmlParser';
-import { buildRibbonDiffFragments, buildRibbonDiffXml, mergeRibbonDiffXml, resolveLabelsFromCache } from './ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from './ribbon/ribbonXmlBuilder';
 import { resolveFluentIconDataUri } from './ribbon/fluentIcon';
 import { buildRibbonSolutionZip, hasRibbonChanges } from './ribbon/solutionPackage';
 import type { RibbonModel } from './ribbon/ribbonModel';
@@ -284,6 +284,22 @@ export class RibbonEditorPanel {
 
         if (!hasRibbonChanges(model)) {
             vscode.window.showInformationMessage('D365: No ribbon changes to publish.');
+            return;
+        }
+
+        // Checked before anything else -- a purely local/model check, so it's worth catching before
+        // even asking the user to confirm or pick a publisher. See findInvalidFlyoutAnchors' own doc
+        // comment for the real incident this guards against.
+        const invalidFlyoutIds = findInvalidFlyoutAnchors(buildRibbonDiffFragments(model));
+        if (invalidFlyoutIds.length) {
+            vscode.window.showErrorMessage(
+                `D365: Publish blocked -- ${invalidFlyoutIds.join(', ')} would be published as a FlyoutAnchor with neither a ` +
+                `menu item nor a PopulateQueryCommand. Dataverse accepts this on import but it can break publishing ` +
+                `entirely afterward (confirmed: Ribbon Workbench refuses to publish anything else to an entity once this ` +
+                `happens). This usually happens when an unrelated edit -- e.g. reordering a sibling control -- incidentally ` +
+                `re-touches a base-ribbon flyout that was already missing one. Select it in the editor and either delete ` +
+                `it, or give it at least one menu item, before publishing.`,
+            );
             return;
         }
 

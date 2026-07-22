@@ -139,6 +139,35 @@ export function buildRibbonDiffFragments(model: RibbonModel): RibbonDiffFragment
     };
 }
 
+// A FlyoutAnchor needs a <Menu> (or a PopulateQueryCommand, which this editor has no UI to set --
+// see controlToObj) or Dataverse imports it fine but it can break publishing entirely down the line.
+// Confirmed against a real org: reordering an unrelated sibling incidentally re-touched (and
+// re-emitted) a base-ribbon FlyoutAnchor -- Mscrm.SubGrid.*.ChangeDataSetControlButton, a deprecated
+// element Microsoft's own docs say isn't supported to modify, already missing both -- and republishing
+// it broke every subsequent publish for the entity (Ribbon Workbench refused to publish anything else
+// to that entity afterward; whatever compiles the effective ribbon for the running client also seems
+// to choke on it). This editor's own serializer only ever omits Menu when a FlyoutAnchor has zero
+// child controls (see controlToObj), so a self-closing <FlyoutAnchor ... /> in what's about to be
+// published is exactly this failure mode -- checked here, against the actual about-to-be-sent
+// fragments, so it catches a FlyoutAnchor pulled in through ANY path (directly edited, reordered
+// alongside, or nested in a wholesale group/tab re-serialize), not just one this editor itself just
+// added. Returns the offending Ids, or an empty array if publishing is safe.
+export function findInvalidFlyoutAnchors(fragments: Pick<RibbonDiffFragments, 'customActions'>): string[] {
+    const ids: string[] = [];
+    const flyoutTagRe = /<FlyoutAnchor\b([^>]*?)(\/>|>)/g;
+    for (const fragment of fragments.customActions) {
+        flyoutTagRe.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = flyoutTagRe.exec(fragment))) {
+            const [, attrs, closing] = m;
+            if (closing !== '/>') { continue; } // has a Menu (see controlToObj) -- fine
+            if (/\bPopulateQueryCommand\s*=/.test(attrs)) { continue; }
+            ids.push(/\bId="([^"]*)"/.exec(attrs)?.[1] ?? '(unknown Id)');
+        }
+    }
+    return ids;
+}
+
 // Builds a standalone RibbonDiffXml containing only this session's tracked edits -- used by the
 // "Export RibbonDiffXml" button, where showing just the delta is the point (human review of what
 // changed). NOT used for publishToDynamics -- see mergeRibbonDiffXml below for why a full solution
@@ -155,13 +184,21 @@ function assembleRibbonDiffXml(
     enableRules: string[],
     displayRules: string[],
     locLabels: string[],
+    // This editor has no UI for custom Group/Ribbon templates and never edits this section -- unlike
+    // every other section below, there is no "this session's changes" to merge in, only the entity's
+    // existing content (if any) to leave alone. Defaults to empty for buildRibbonDiffXml's standalone
+    // delta export (which has no "existing" to preserve in the first place); mergeRibbonDiffXml always
+    // passes the real existing block through instead. Getting this wrong previously meant every
+    // publish silently replaced the entity's actual Templates section with an empty one -- a real,
+    // confirmed instance of exactly the kind of silent corruption this tool must never cause.
+    templatesXml = '<Templates />',
 ): string {
     return [
         '<RibbonDiffXml>',
         '  <CustomActions>',
         ...indentAll(customActions, 4),
         '  </CustomActions>',
-        '  <Templates />',
+        ...indent(templatesXml.trim(), 2).split('\n'),
         '  <CommandDefinitions>',
         ...indentAll(commandDefinitions, 4),
         '  </CommandDefinitions>',
@@ -208,8 +245,9 @@ export function mergeRibbonDiffXml(existingRibbonDiffXml: string, model: RibbonM
     const enableRules = mergeSection(ruleDefinitions, 'EnableRules', f.enableRules);
     const displayRules = mergeSection(ruleDefinitions, 'DisplayRules', f.displayRules);
     const locLabels = mergeSection(existingRibbonDiffXml, 'LocLabels', f.locLabels);
+    const templatesXml = extractOuterElement(existingRibbonDiffXml, 'Templates') ?? '<Templates />';
 
-    return assembleRibbonDiffXml(customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, locLabels);
+    return assembleRibbonDiffXml(customActions, hideCustomActions, commandDefinitions, enableRules, displayRules, locLabels, templatesXml);
 }
 
 // Fills in any still-unresolved `$LocLabels:` reference in `model` from a locally-remembered cache of
@@ -273,6 +311,20 @@ function extractElementInner(xml: string, tag: string): string | undefined {
     return xml.slice(openMatch.index + openMatch[0].length, closeIdx);
 }
 
+// Same search as extractElementInner, but returns the WHOLE matched element (open tag through close
+// tag, or the self-closing tag itself) verbatim rather than just its inner text -- used for a section
+// this editor only ever needs to pass through untouched (see assembleRibbonDiffXml's templatesXml),
+// never to parse/rebuild.
+function extractOuterElement(xml: string, tag: string): string | undefined {
+    const openMatch = new RegExp(`<${tag}(?:\\s[^>]*)?/>|<${tag}(?:\\s[^>]*)?>`).exec(xml);
+    if (!openMatch) { return undefined; }
+    if (openMatch[0].endsWith('/>')) { return openMatch[0]; }
+    const closeTag = `</${tag}>`;
+    const closeIdx = xml.indexOf(closeTag, openMatch.index + openMatch[0].length);
+    if (closeIdx === -1) { return undefined; }
+    return xml.slice(openMatch.index, closeIdx + closeTag.length);
+}
+
 function extractId(xmlFragment: string): string | undefined {
     return /\bId\s*=\s*"([^"]*)"/.exec(xmlFragment)?.[1];
 }
@@ -327,8 +379,22 @@ function serializeGroup(group: RibbonGroup, seq: number, seqOf: SeqOf, labels: L
     return builder.build({ Group: groupToObj(group, seq, seqOf, labels) }) as string;
 }
 
+// Template/Command are mandatory in practice on every real Group -- Template is what actually gives
+// the group's Controls a layout to render into (a Group with no Template either fails validation or
+// silently never shows any of its controls, confirmed against a live environment: a custom group
+// published without one keeps every button added to it invisible no matter what else about the
+// button is correct). Preserves an existing group's own real values (parsed verbatim -- see
+// ribbonXmlParser.ts); only a group added this session, which never had either, falls back to
+// "Mscrm.Templates.Flexible2"/"Mscrm.Enabled" -- both confirmed against real production ribbon
+// exports (e.g. this exact pairing on the stock 'Management' group present in every entity's
+// grid/subgrid ribbon), not a guess.
 function groupToObj(group: RibbonGroup, seq: number, seqOf: SeqOf, labels: LabelAccumulator): Record<string, unknown> {
-    const obj: Record<string, unknown> = { '@_Id': group.id, '@_Sequence': String(seq) };
+    const obj: Record<string, unknown> = {
+        '@_Id': group.id,
+        '@_Sequence': String(seq),
+        '@_Template': group.template ?? 'Mscrm.Templates.Flexible2',
+        '@_Command': group.command ?? 'Mscrm.Enabled',
+    };
     const title = labelRef(group.title, `${group.id}.Title`, labels);
     if (title) { obj['@_Title'] = title; }
     const controls = controlsToObj(group.controls, labels, seqOf);

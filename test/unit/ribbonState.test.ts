@@ -359,17 +359,17 @@ describe('ribbonState reducer: removeRuleFromCommand', () => {
 });
 
 describe('ribbonState reducer: reorderControl', () => {
-    it('moves the control before the target and marks every repositioned control modified so each gets a fresh Sequence on export', () => {
+    it('moves the control before the target, marking only the moved control modified -- untouched siblings must stay unchanged', () => {
         const state = stateWithModel(baseModel());
         const next = reducer(state, { type: 'local/reorderControl', groupId: 'grp1', controlId: 'btn.with.command', beforeControlId: 'btn.no.command' });
 
         const controls = next.model!.tabs[0].groups[0].controls;
         assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
-        assert.strictEqual(controls[0].status, 'modified');
-        assert.strictEqual(controls[1].status, 'modified');
+        assert.strictEqual(controls[0].status, 'modified', 'the moved control');
+        assert.strictEqual(controls[1].status, 'unchanged', 'an untouched sibling must not be marked modified just for sharing a group with the moved control');
     });
 
-    it('assigns each repositioned control a fresh Sequence matching its new array position, not its stale original one', () => {
+    it('does not touch an unrelated sibling\'s own Sequence, only the moved control\'s', () => {
         const model = baseModel();
         model.tabs[0].groups[0].controls[0].sequence = '10'; // btn.no.command
         model.tabs[0].groups[0].controls[1].sequence = '20'; // btn.with.command
@@ -377,9 +377,30 @@ describe('ribbonState reducer: reorderControl', () => {
 
         const controls = next.model!.tabs[0].groups[0].controls;
         assert.deepStrictEqual(controls.map(c => c.id), ['btn.with.command', 'btn.no.command']);
+        assert.strictEqual(controls[1].sequence, '10', 'the untouched sibling must keep its original Sequence verbatim');
         const first = Number(controls[0].sequence);
         const second = Number(controls[1].sequence);
-        assert.ok(first < second, `expected the new first control's Sequence (${first}) to sort before the new second's (${second})`);
+        assert.ok(first < second, `expected the moved control's new Sequence (${first}) to sort before its new neighbor's (${second})`);
+    });
+
+    it('picks a Sequence between the moved control\'s new neighbors without renumbering either of them', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls = [
+            { kind: 'Button', id: 'a', label: 'A', toolTipTitle: '', toolTipDescription: '', status: 'unchanged', sequence: '10' },
+            { kind: 'Button', id: 'b', label: 'B', toolTipTitle: '', toolTipDescription: '', status: 'unchanged', sequence: '20' },
+            { kind: 'Button', id: 'c', label: 'C', toolTipTitle: '', toolTipDescription: '', status: 'unchanged', sequence: '30' },
+        ];
+        const next = reducer(stateWithModel(model), { type: 'local/reorderControl', groupId: 'grp1', controlId: 'c', beforeControlId: 'b' });
+
+        const controls = next.model!.tabs[0].groups[0].controls;
+        assert.deepStrictEqual(controls.map(c => c.id), ['a', 'c', 'b']);
+        assert.strictEqual(controls[0].sequence, '10', 'a must be untouched');
+        assert.strictEqual(controls[0].status, 'unchanged');
+        assert.strictEqual(controls[2].sequence, '20', 'b must be untouched');
+        assert.strictEqual(controls[2].status, 'unchanged');
+        const moved = Number(controls[1].sequence);
+        assert.ok(moved > 10 && moved < 20, `expected c's new Sequence (${moved}) to fall strictly between a's (10) and b's (20)`);
+        assert.strictEqual(controls[1].status, 'modified');
     });
 
     it('appends to the end when beforeControlId is null', () => {
@@ -447,6 +468,32 @@ describe('ribbonState reducer: deleteControl (delete-or-hide, whichever applies)
         const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.new' });
         const controls = next.model!.tabs[0].groups[0].controls;
         assert.ok(!controls.some(c => c.id === 'btn.new'));
+    });
+
+    it('also drops the control\'s own CommandDefinition when both were added this session and nothing else references it -- otherwise it publishes as an orphaned, unreferenced CommandDefinition forever', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added', commandId: 'cmd.new' });
+        model.commandDefinitions.push({ id: 'cmd.new', enableRules: [], displayRules: [], actions: [], status: 'added' });
+        const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.new' });
+        assert.ok(!next.model!.commandDefinitions.some(c => c.id === 'cmd.new'), 'expected the orphaned CommandDefinition to be removed too');
+    });
+
+    it('leaves an already-published CommandDefinition alone even if the control referencing it is removed -- only a command added this same session is dead weight', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({ kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added', commandId: 'cmd1' });
+        const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.new' });
+        assert.ok(next.model!.commandDefinitions.some(c => c.id === 'cmd1'), 'cmd1 pre-exists (see baseModel) and must not be removed');
+    });
+
+    it('does not drop a CommandDefinition still referenced by another control', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(
+            { kind: 'Button', id: 'btn.new', label: 'New', toolTipTitle: '', toolTipDescription: '', status: 'added', commandId: 'cmd.shared' },
+            { kind: 'Button', id: 'btn.new2', label: 'New2', toolTipTitle: '', toolTipDescription: '', status: 'added', commandId: 'cmd.shared' },
+        );
+        model.commandDefinitions.push({ id: 'cmd.shared', enableRules: [], displayRules: [], actions: [], status: 'added' });
+        const next = reducer(stateWithModel(model), { type: 'local/deleteControl', controlId: 'btn.new' });
+        assert.ok(next.model!.commandDefinitions.some(c => c.id === 'cmd.shared'), 'still referenced by btn.new2');
     });
 
     it('marks a modified control deleted, discarding its in-progress edit', () => {

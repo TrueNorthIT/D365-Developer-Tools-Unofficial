@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { buildRibbonDiffFragments, buildRibbonDiffXml, mergeRibbonDiffXml, resolveLabelsFromCache } from '../../src/ribbon/ribbonXmlBuilder';
+import { buildRibbonDiffFragments, buildRibbonDiffXml, findInvalidFlyoutAnchors, mergeRibbonDiffXml, resolveLabelsFromCache } from '../../src/ribbon/ribbonXmlBuilder';
 import type { RibbonControl, RibbonModel } from '../../src/ribbon/ribbonModel';
 
 function baseModel(): RibbonModel {
@@ -153,6 +153,26 @@ describe('buildRibbonDiffXml', () => {
         // The new tab's own group/control must not also appear as separate top-level CustomActions.
         assert.doesNotMatch(xml, /Id="new_group\.Custom"/);
         assert.doesNotMatch(xml, /Id="new_tab_button\.Custom"/);
+    });
+
+    it('gives a brand-new group a Template/Command, or every button added to it stays invisible regardless of anything else about it being correct', () => {
+        const xml = buildRibbonDiffXml(baseModel());
+        const groupMatch = /<Group Id="new_group"[^>]*\/?>/.exec(xml) ?? /<Group Id="new_group"[^>]*>/.exec(xml);
+        assert.ok(groupMatch, 'expected to find the new_group element');
+        assert.match(groupMatch![0], /Template="Mscrm\.Templates\.Flexible2"/);
+        assert.match(groupMatch![0], /Command="Mscrm\.Enabled"/);
+    });
+
+    it('preserves an existing (parsed) group\'s own Template/Command when it\'s re-serialized on edit, rather than overwriting it with the new-group default', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].status = 'modified';
+        model.tabs[0].groups[0].template = 'Mscrm.Templates.Flexible';
+        model.tabs[0].groups[0].command = 'Mscrm.SomeOtherGroupCommand';
+        const xml = buildRibbonDiffXml(model);
+        const groupMatch = /<Group Id="grp\.currency"[^>]*>/.exec(xml);
+        assert.ok(groupMatch, 'expected to find the grp.currency element');
+        assert.match(groupMatch![0], /Template="Mscrm\.Templates\.Flexible"/);
+        assert.match(groupMatch![0], /Command="Mscrm\.SomeOtherGroupCommand"/);
     });
 
     it('includes added/modified command definitions but omits unchanged ones', () => {
@@ -386,5 +406,63 @@ describe('mergeRibbonDiffXml', () => {
         const xml = mergeRibbonDiffXml(existingDiff, model);
         assert.match(xml, /<HideCustomAction Id="base_button\.Hide"/);
         assert.doesNotMatch(xml, /Id="base_button\.Custom"/);
+    });
+
+    it('preserves an existing populated Templates section verbatim -- this editor has no UI to edit it and must never silently replace it with an empty one', () => {
+        const diffWithTemplates = existingDiff.replace(
+            '<Templates />',
+            '<Templates><RibbonTemplates Id="Mscrm.Templates"><RibbonTemplate Id="custom.template"><CommandUIDefinition><Group /></CommandUIDefinition></RibbonTemplate></RibbonTemplates></Templates>',
+        );
+        const xml = mergeRibbonDiffXml(diffWithTemplates, baseModel());
+        assert.match(xml, /<RibbonTemplate Id="custom\.template">/);
+    });
+
+    it('still emits an empty Templates section when there was none to preserve', () => {
+        const xml = mergeRibbonDiffXml(existingDiff, baseModel());
+        assert.match(xml, /<Templates \/>/);
+    });
+});
+
+describe('findInvalidFlyoutAnchors', () => {
+    function modelWithFlyout(flyout: RibbonControl): RibbonModel {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push(flyout);
+        return model;
+    }
+
+    it('flags a FlyoutAnchor with no children (no Menu) and no PopulateQueryCommand', () => {
+        const model = modelWithFlyout({
+            kind: 'FlyoutAnchor', id: 'flyout.empty', label: 'Empty', toolTipTitle: '', toolTipDescription: '', status: 'added', controls: [],
+        });
+        const ids = findInvalidFlyoutAnchors(buildRibbonDiffFragments(model));
+        assert.deepStrictEqual(ids, ['flyout.empty']);
+    });
+
+    it('does not flag a FlyoutAnchor that has at least one menu item', () => {
+        const model = modelWithFlyout({
+            kind: 'FlyoutAnchor', id: 'flyout.withmenu', label: 'With Menu', toolTipTitle: '', toolTipDescription: '', status: 'added',
+            controls: [{
+                kind: 'MenuSection', id: 'flyout.withmenu.section1', label: '', toolTipTitle: '', toolTipDescription: '', status: 'added',
+                controls: [{ kind: 'Button', id: 'flyout.withmenu.item1', label: 'Item', toolTipTitle: '', toolTipDescription: '', status: 'added' }],
+            }],
+        });
+        const ids = findInvalidFlyoutAnchors(buildRibbonDiffFragments(model));
+        assert.deepStrictEqual(ids, []);
+    });
+
+    it('does not flag an unrelated Button', () => {
+        const ids = findInvalidFlyoutAnchors(buildRibbonDiffFragments(baseModel()));
+        assert.deepStrictEqual(ids, []);
+    });
+
+    it('flags a base-ribbon FlyoutAnchor incidentally re-emitted via a wholesale group re-serialize (e.g. reordering a sibling), even though this editor never touched the flyout itself', () => {
+        const model = baseModel();
+        model.tabs[0].groups[0].controls.push({
+            kind: 'FlyoutAnchor', id: 'Mscrm.SubGrid.tn_regulation.ChangeDataSetControlButton', label: 'Change View',
+            toolTipTitle: '', toolTipDescription: '', status: 'unchanged', controls: [],
+        });
+        model.tabs[0].groups[0].status = 'modified'; // e.g. group-level touch from a sibling reorder
+        const ids = findInvalidFlyoutAnchors(buildRibbonDiffFragments(model));
+        assert.deepStrictEqual(ids, ['Mscrm.SubGrid.tn_regulation.ChangeDataSetControlButton']);
     });
 });

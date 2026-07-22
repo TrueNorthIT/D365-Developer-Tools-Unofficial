@@ -329,15 +329,23 @@ function withModel(state: EditorState, action: LocalAction): EditorState {
                 : [...rest.slice(0, insertIndex), control, ...rest.slice(insertIndex)];
             if (reordered.every((c, i) => c === arr[i])) { break; } // dropped back where it started
 
-            // Persist reorder on export by giving every repositioned control a fresh Sequence matching
-            // its new position -- ribbonXmlBuilder.ts's buildRibbonDiffFragments otherwise reuses a
-            // 'modified' control's EXISTING Sequence verbatim (so that a plain field edit, e.g. a
-            // label change, doesn't quietly reshuffle it to the back of the group), so a real move has
-            // to say so explicitly by updating the stored Sequence itself, right here.
-            reordered.forEach((c, i) => {
-                touch(c);
-                if (c.status !== 'deleted') { c.sequence = String((i + 1) * 10); }
-            });
+            // Only the MOVED control needs a new Sequence to reflect its new position -- this used to
+            // touch() and renumber every control in the group, which marks every untouched sibling
+            // 'modified' too, forcing each one to be re-emitted as its own CustomAction on export --
+            // not just wasteful, but actively dangerous: confirmed against a real org, a plain
+            // drag-and-drop reorder (nothing to do with the sibling at all) marked the base ribbon's
+            // Mscrm.SubGrid.*.ChangeDataSetControlButton FlyoutAnchor 'modified' purely by sharing a
+            // group with the control actually being moved -- and re-emitting it (a deprecated,
+            // Microsoft-acknowledged "not supported to modify" element that's already missing a
+            // Menu/PopulateQueryCommand in the base ribbon) broke publishing outright. Giving the moved
+            // control a Sequence that simply falls between its new neighbors' EXISTING Sequence values
+            // repositions it without touching anything else in the group at all.
+            const newIndex = reordered.indexOf(control);
+            const prevSeq = newIndex > 0 ? sequenceNumberOf(reordered[newIndex - 1]) : undefined;
+            const nextSeq = newIndex < reordered.length - 1 ? sequenceNumberOf(reordered[newIndex + 1]) : undefined;
+            control.sequence = String(sequenceBetween(prevSeq, nextSeq));
+            touch(control);
+
             found.group.controls = reordered;
             break;
         }
@@ -405,6 +413,29 @@ function deleteControl(model: RibbonModel, controlId: string): void {
     if (!control) { return; }
     const parentArray = findControlParentArray(model, controlId);
     if (parentArray) { removeFromArray(parentArray, controlId); }
+
+    // A Button/SplitButton created via addControl brings its own freshly-created CommandDefinition
+    // with it (see 'local/addControl') -- deleting the control again before ever publishing it
+    // otherwise leaves that CommandDefinition behind with nothing pointing at it: it's still
+    // 'unchanged'/'added' isn't tracked per-control, so buildRibbonDiffFragments has no way to know
+    // it's now orphaned, and it publishes as dead weight forever (confirmed against a live org where
+    // exactly this happened -- the button was gone, but its CommandDefinition remained, unreferenced,
+    // in every subsequent publish). Only ever drops a command that was ALSO added this session --
+    // one that already existed on the server is left alone, same as this tool leaves any other
+    // already-published customization alone once its owning control is just hidden (hideControl)
+    // rather than removed outright.
+    if (control.commandId && !anyControlReferencesCommand(model, control.commandId)) {
+        const cmdIndex = model.commandDefinitions.findIndex(c => c.id === control.commandId);
+        if (cmdIndex !== -1 && model.commandDefinitions[cmdIndex].status === 'added') {
+            model.commandDefinitions.splice(cmdIndex, 1);
+        }
+    }
+}
+
+function anyControlReferencesCommand(model: RibbonModel, commandId: string): boolean {
+    const walk = (controls: RibbonControl[]): boolean =>
+        controls.some(c => c.commandId === commandId || (c.controls ? walk(c.controls) : false));
+    return model.tabs.some(tab => tab.groups.some(group => walk(group.controls)));
 }
 
 function removeFromArray(controls: RibbonControl[], id: string): void {
@@ -414,6 +445,22 @@ function removeFromArray(controls: RibbonControl[], id: string): void {
 
 function touch(node: { status: RibbonTab['status'] }): void {
     if (node.status === 'unchanged') { node.status = 'modified'; }
+}
+
+function sequenceNumberOf(control: RibbonControl): number | undefined {
+    return control.sequence !== undefined ? Number(control.sequence) : undefined;
+}
+
+// Picks a Sequence strictly between two neighbors' existing values wherever there's room, falling
+// back to a fixed offset from whichever neighbor exists when the other side is the start/end of the
+// group -- see reorderControl's own doc comment for why this must never touch a neighbor's own
+// Sequence to make room.
+function sequenceBetween(prev: number | undefined, next: number | undefined): number {
+    if (prev === undefined && next === undefined) { return 100; }
+    if (prev === undefined) { return next! - 10; }
+    if (next === undefined) { return prev + 10; }
+    const mid = Math.floor((prev + next) / 2);
+    return mid > prev ? mid : prev + 1;
 }
 
 // ── Tree lookups ──────────────────────────────────────────────────────────────
