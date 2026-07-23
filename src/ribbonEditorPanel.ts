@@ -357,24 +357,68 @@ export class RibbonEditorPanel {
         // Can't stop another tool (Ribbon Workbench, hand-editing) from creating a competing
         // CustomAction for something this tool already customizes -- that happens entirely outside
         // this extension's own publish. This is the next best thing: since the entity's raw existing
-        // diff was just read anyway, check it for exactly that pattern and surface it now rather than
+        // diff was just read anyway, check it for exactly that pattern and log it now rather than
         // leaving the user to discover it later as a mysterious failure in a different tool, or a
-        // customization that silently doesn't take effect. See findInvalidFlyoutAnchors' own doc
-        // comment above for the same "checked before anything else" reasoning.
+        // customization that silently doesn't take effect.
+        //
+        // Excludes anything THIS publish is already touching (added/modified/deleted/reverted) --
+        // mergeCustomActionsSection strips every existing CustomAction declaring that same element
+        // regardless of how many duplicates there were, so a duplicate this session is about to
+        // consolidate down to one clean CustomAction isn't a problem still worth logging either.
+        //
+        // Purely diagnostic, so it goes to the output channel (log), not a notification -- proceeding
+        // doesn't change what happens to an untouched duplicate either way, it's left exactly as it
+        // already was on the server, so there's nothing here that actually needs the user's attention
+        // mid-publish, only something worth being able to look up if they go asking "why doesn't this
+        // hide/edit stick".
         if (existingRibbonDiffXml) {
-            const duplicates = findDuplicateCustomActionTargets(existingRibbonDiffXml);
-            if (duplicates.length) {
-                const summary = duplicates.map(d => `${d.elementId} (${d.wrapperIds.join(', ')})`).join('; ');
-                const proceed = await vscode.window.showWarningMessage(
-                    `D365: '${entityLabel}' already has more than one CustomAction declaring the same element -- ${summary}. ` +
-                    `This usually means another tool (Ribbon Workbench, hand-editing) created its own customization for ` +
-                    `something this tool -- or another tool -- already customizes. Whichever one "wins" isn't reliable, and ` +
-                    `it can silently break hiding/publishing for that element. Consider removing the duplicate(s) before ` +
-                    `relying on this. Continue publishing anyway?`,
-                    { modal: true },
-                    'Publish Anyway',
+            const touchedElementIds = new Set(buildRibbonDiffFragments(model).touchedElementIds);
+            const duplicates = findDuplicateCustomActionTargets(existingRibbonDiffXml)
+                .filter(d => !touchedElementIds.has(d.elementId));
+            const envUrl = this.client.environmentUrl;
+            for (const d of duplicates) {
+                // "Remove Customisation" is deliberately NOT the leading suggestion here: it strips
+                // every declaration with no replacement, which is correct for an OOTB element (the
+                // base definition shows through) but for a fully custom element -- no base definition
+                // to fall back to -- it makes the control vanish entirely. Editing it (any change,
+                // e.g. re-saving its current label) marks it 'modified', which replaces every existing
+                // declaration with exactly one clean one from this session -- safe for either case,
+                // since it keeps the control's actual configuration intact rather than deleting it.
+                const manualQuery = envUrl
+                    ? `${envUrl}/api/data/v9.0/ribbondiffs?$filter=contains(rdx,%27${encodeURIComponent(d.elementId)}%27)%20and%20entity%20eq%20%27${this.entityLogicalName}%27&$select=ribbondiffid,tabid,difftype,diffid,rdx,createdon,modifiedon`
+                    : `<connect first to fill in the environment URL>/api/data/v9.0/ribbondiffs?$filter=contains(rdx,%27${encodeURIComponent(d.elementId)}%27)%20and%20entity%20eq%20%27${this.entityLogicalName}%27&$select=ribbondiffid,tabid,difftype,diffid,rdx,createdon,modifiedon`;
+                log(
+                    `Ribbon editor ('${this.entityLogicalName}'): '${d.elementId}' has more than one CustomAction declaring it.\n` +
+                    `Wrapper Ids: ${d.wrapperIds.join(', ')}\n` +
+                    `Likely cause: another tool (Ribbon Workbench, hand-editing) created its own customization for something ` +
+                    `already customized here, or vice versa. Whichever one "wins" isn't reliable and can silently break ` +
+                    `hiding/editing it.\n` +
+                    `\n` +
+                    `How to tell which one is correct:\n` +
+                    `- Compare each one's actual Button/Group/Tab attributes (Command, LabelText, Sequence, TemplateAlias, ` +
+                    `icons) in the "rdx" column below -- if they're identical, it doesn't matter which is kept.\n` +
+                    `- If they differ, keep whichever matches what you actually intend right now (the tool you most ` +
+                    `recently and deliberately edited it through).\n` +
+                    `- If "createdon"/"modifiedon" come back populated on the query below, the newer row is usually the ` +
+                    `one to trust -- not guaranteed to be selectable/populated on this table, worth just checking.\n` +
+                    `\n` +
+                    `Fix via this tool (recommended -- safe for both OOTB and fully custom elements):\n` +
+                    `Select '${d.elementId}' in the editor and make any edit (even re-saving its current label) to mark ` +
+                    `it 'modified', then publish. That replaces every existing declaration with one clean one from this ` +
+                    `session. Only use "Remove Customisation" instead if you actually want it reverted to its base/OOB ` +
+                    `appearance -- not appropriate for a fully custom element, which has no base definition to fall back ` +
+                    `to and would just disappear.\n` +
+                    `\n` +
+                    `Last resort ONLY -- manual fix via the undocumented "ribbondiffs" table (inspect/delete a specific ` +
+                    `row directly): this is not an official, Microsoft-supported API surface (it just happens to work, ` +
+                    `confirmed against a live org) and could change or disappear without notice. Prefer the fix above; ` +
+                    `only reach for this if you specifically need surgical control the tool's own publish can't give you.\n` +
+                    `1. Find the rows:\n` +
+                    `   GET ${manualQuery}\n` +
+                    `2. Compare each row's "rdx" column to decide which one to keep.\n` +
+                    `3. Delete the row you DON'T want to keep -- run from the browser console (F12) on a page in that org:\n` +
+                    `   await fetch("/api/data/v9.0/ribbondiffs(<ribbondiffid-of-the-one-to-remove>)", { method: "DELETE", headers: { "OData-MaxVersion": "4.0", "OData-Version": "4.0" } });`,
                 );
-                if (proceed !== 'Publish Anyway') { return; }
             }
         }
 
