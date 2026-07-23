@@ -278,6 +278,16 @@ export const window = {
 
     createInputBox: (): InputBoxMock => new InputBoxMock(),
 
+    createOutputChannel: (name: string) => ({
+        name,
+        appendLine: (_value: string) => {},
+        append: (_value: string) => {},
+        clear: () => {},
+        show: (..._args: any[]) => {},
+        hide: () => {},
+        dispose: () => {},
+    }),
+
     createQuickPick: (): QuickPickMock => new QuickPickMock(),
 
     registerWebviewViewProvider: (): Disposable => new Disposable(),

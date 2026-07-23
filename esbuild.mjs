@@ -1,6 +1,6 @@
-// Bundles the React webview app (src/webview) into out/webview/entityExplorer.{js,css}.
+// Bundles the React webview apps (src/webview, src/webview-ribbon) into out/webview/*.{js,css}.
 // The VS Code extension host itself is still built by `tsc` — this only handles the
-// browser-side webview bundle, which tsc can't produce (JSX + bundling).
+// browser-side webview bundles, which tsc can't produce (JSX + bundling).
 import * as esbuild from 'esbuild';
 
 const production = process.argv.includes('--production');
@@ -25,13 +25,16 @@ const watchLogPlugin = {
 
 /** @type {import('esbuild').BuildOptions} */
 const options = {
-  entryPoints: ['src/webview/index.tsx'],
+  entryPoints: [
+    { in: 'src/webview/index.tsx', out: 'entityExplorer' },
+    { in: 'src/webview-ribbon/index.tsx', out: 'ribbonEditor' },
+  ],
   bundle: true,
   format: 'iife',
   platform: 'browser',
   target: 'es2020',
   jsx: 'automatic',
-  outfile: 'out/webview/entityExplorer.js',
+  outdir: 'out/webview',
   sourcemap: !production,
   minify: production,
   logLevel: 'info',

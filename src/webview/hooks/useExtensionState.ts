@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { EntityInfo, InboundMessage } from '../protocol';
+import type { EntityInfo, InboundMessage, RibbonLocation } from '../protocol';
 import { post } from '../vscodeApi';
 
 // This hook owns the genuinely event-shaped state pushed by the extension (connection,
@@ -107,6 +107,7 @@ export interface ExtensionApi {
     attributeDisplayName: string,
     attributeType: string,
   ): void;
+  openRibbonEditor(entityLogicalName: string, entityDisplayName: string, ribbonLocation: RibbonLocation): void;
 }
 
 export function useExtensionState(): ExtensionApi {
@@ -155,5 +156,9 @@ export function useExtensionState(): ExtensionApi {
     [],
   );
 
-  return { state, connect, toggleEntity, showSolutionPicker, clearSolutionFilter, makeInterface, makeEnum };
+  const openRibbonEditor = useCallback((entityLogicalName: string, entityDisplayName: string, ribbonLocation: RibbonLocation) => {
+    post({ type: 'openRibbonEditor', entityLogicalName, entityDisplayName, ribbonLocation });
+  }, []);
+
+  return { state, connect, toggleEntity, showSolutionPicker, clearSolutionFilter, makeInterface, makeEnum, openRibbonEditor };
 }

@@ -4,7 +4,10 @@ import * as path from 'path';
 import { ConnectionManager } from './connectionManager';
 import { DataverseClient } from './dataverseClient';
 import { EntityExplorerWebviewProvider } from './entityExplorerWebview';
+import { RibbonEditorPanel } from './ribbonEditorPanel';
+import { getOutputChannel } from './logger';
 import { EntityCache } from './entityCache';
+import { RibbonLabelCache } from './ribbonLabelCache';
 import { D365StatusBar, showD365Menu } from './statusBar';
 import { McpBridge, isMcpConfigured } from './mcpBridge';
 import { McpStatusBar } from './mcpStatusBar';
@@ -19,10 +22,19 @@ import {
 } from './webResourceManager';
 
 export function activate(context: vscode.ExtensionContext) {
+    context.subscriptions.push(getOutputChannel());
+
     const connectionManager = new ConnectionManager(context);
     const client = new DataverseClient(connectionManager);
     const entityCache = new EntityCache(context);
-    const explorerProvider = new EntityExplorerWebviewProvider(connectionManager, client, context.extensionUri, entityCache);
+    const ribbonLabelCache = new RibbonLabelCache(context);
+    const explorerProvider = new EntityExplorerWebviewProvider(
+        connectionManager,
+        client,
+        context.extensionUri,
+        entityCache,
+        (logicalName, displayName, ribbonLocation) => void RibbonEditorPanel.createOrShow(context.extensionUri, client, ribbonLabelCache, logicalName, displayName, ribbonLocation),
+    );
     const statusBar = new D365StatusBar(connectionManager);
     context.subscriptions.push(statusBar);
 
@@ -113,6 +125,7 @@ export function activate(context: vscode.ExtensionContext) {
             compareWebResource(uri, connectionManager, client, webResourceContentProvider),
         ),
         vscode.commands.registerCommand('d365.configureMcp', () => configureMcpCommand(context.extensionPath)),
+        vscode.commands.registerCommand('d365.editRibbon', () => editRibbonCommand(client, context.extensionUri, ribbonLabelCache)),
     );
 }
 
@@ -199,6 +212,44 @@ async function browseEntity(client: DataverseClient): Promise<void> {
             matchOnDetail: true,
         },
     );
+}
+
+// ── Edit ribbon (command palette) ───────────────────────────────────────────
+
+async function editRibbonCommand(client: DataverseClient, extensionUri: vscode.Uri, ribbonLabelCache: RibbonLabelCache): Promise<void> {
+    let entities;
+    try {
+        entities = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: 'D365: Loading entities…', cancellable: false },
+            () => client.getEntities(),
+        );
+    } catch (err) {
+        vscode.window.showErrorMessage(`Failed to load entities: ${errorMessage(err)}`);
+        return;
+    }
+
+    const pick = await vscode.window.showQuickPick(
+        entities.map(e => ({
+            label: e.displayName || e.logicalName,
+            description: e.logicalName,
+            detail: e.isCustom ? 'Custom entity' : undefined,
+            entity: e,
+        })),
+        { title: 'D365: Select entity to edit ribbon', placeHolder: 'Type to filter…', matchOnDescription: true },
+    );
+    if (!pick) { return; }
+
+    const locationPick = await vscode.window.showQuickPick(
+        [
+            { label: 'Main Form', filter: 'Form' as const },
+            { label: 'Home Grid', filter: 'HomepageGrid' as const },
+            { label: 'Sub-Grid', filter: 'SubGrid' as const },
+        ],
+        { title: `D365: Edit ribbon — ${pick.entity.displayName || pick.entity.logicalName}`, placeHolder: 'Select a ribbon location…' },
+    );
+    if (!locationPick) { return; }
+
+    await RibbonEditorPanel.createOrShow(extensionUri, client, ribbonLabelCache, pick.entity.logicalName, pick.entity.displayName, locationPick.filter);
 }
 
 async function configureMcpCommand(extensionPath: string): Promise<void> {
