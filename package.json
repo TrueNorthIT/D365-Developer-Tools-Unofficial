@@ -91,6 +91,30 @@
         "command": "d365.configureMcp",
         "title": "Configure MCP Server for this Workspace",
         "category": "D365"
+      },
+      {
+        "command": "d365.previewForm",
+        "title": "Preview Form (d365architect YAML)",
+        "category": "D365",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "d365.previewView",
+        "title": "Preview View (d365architect YAML)",
+        "category": "D365",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "d365.previewFormInNewWindow",
+        "title": "Preview Form in New Window (d365architect YAML)",
+        "category": "D365",
+        "icon": "$(empty-window)"
+      },
+      {
+        "command": "d365.previewViewInNewWindow",
+        "title": "Preview View in New Window (d365architect YAML)",
+        "category": "D365",
+        "icon": "$(empty-window)"
       }
     ],
     "configuration": {
@@ -165,6 +189,22 @@
         {
           "command": "d365.switchAccount",
           "when": "d365.connected"
+        },
+        {
+          "command": "d365.previewForm",
+          "when": "resourceFilename =~ /\\.form\\.yml$/"
+        },
+        {
+          "command": "d365.previewFormInNewWindow",
+          "when": "resourceFilename =~ /\\.form\\.yml$/"
+        },
+        {
+          "command": "d365.previewView",
+          "when": "resourceFilename =~ /\\.view\\.yml$/"
+        },
+        {
+          "command": "d365.previewViewInNewWindow",
+          "when": "resourceFilename =~ /\\.view\\.yml$/"
         }
       ],
       "view/title": [
@@ -209,6 +249,26 @@
           "command": "d365.compareWebResource",
           "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
           "group": "d365@2"
+        },
+        {
+          "command": "d365.previewForm",
+          "when": "resourceFilename =~ /\\.form\\.yml$/",
+          "group": "d365@3"
+        },
+        {
+          "command": "d365.previewFormInNewWindow",
+          "when": "resourceFilename =~ /\\.form\\.yml$/",
+          "group": "d365@4"
+        },
+        {
+          "command": "d365.previewView",
+          "when": "resourceFilename =~ /\\.view\\.yml$/",
+          "group": "d365@3"
+        },
+        {
+          "command": "d365.previewViewInNewWindow",
+          "when": "resourceFilename =~ /\\.view\\.yml$/",
+          "group": "d365@4"
         }
       ],
       "editor/title": [
@@ -221,6 +281,26 @@
           "command": "d365.compareWebResource",
           "when": "d365.connected && resourceExtname =~ /\\.(js|html|htm|css|xml|resx|svg)$/",
           "group": "navigation@2"
+        },
+        {
+          "command": "d365.previewForm",
+          "when": "resourceFilename =~ /\\.form\\.yml$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "d365.previewFormInNewWindow",
+          "when": "resourceFilename =~ /\\.form\\.yml$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "d365.previewView",
+          "when": "resourceFilename =~ /\\.view\\.yml$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "d365.previewViewInNewWindow",
+          "when": "resourceFilename =~ /\\.view\\.yml$/",
+          "group": "navigation@4"
         }
       ]
     }
@@ -270,6 +350,7 @@
   "dependencies": {
     "@azure/msal-node": "^3.8.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.9.1",
     "zod": "^4.4.3"
   }
 }

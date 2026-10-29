@@ -8,6 +8,8 @@ import { EntityCache } from './entityCache';
 import { D365StatusBar, showD365Menu } from './statusBar';
 import { McpBridge, isMcpConfigured } from './mcpBridge';
 import { McpStatusBar } from './mcpStatusBar';
+import { FormPreviewPanel } from './formPreviewPanel';
+import { ViewPreviewPanel } from './viewPreviewPanel';
 import { D365CodeActionProvider, D365CompletionProvider, registerInsertInterfaceCommand } from './d365CodeActionProvider';
 import {
     publishWebResources,
@@ -113,7 +115,28 @@ export function activate(context: vscode.ExtensionContext) {
             compareWebResource(uri, connectionManager, client, webResourceContentProvider),
         ),
         vscode.commands.registerCommand('d365.configureMcp', () => configureMcpCommand(context.extensionPath)),
+        ...[false, true].flatMap(newWindow => {
+            const suffix = newWindow ? 'InNewWindow' : '';
+            return [
+                previewCommand(`d365.previewForm${suffix}`, '.form.yml',
+                    uri => FormPreviewPanel.show(uri, connectionManager, client, newWindow)),
+                previewCommand(`d365.previewView${suffix}`, '.view.yml',
+                    uri => ViewPreviewPanel.show(uri, connectionManager, client, newWindow)),
+            ];
+        }),
     );
+}
+
+/** Registers a preview command for the given file (explorer/title-bar uri, else the active editor's file). */
+function previewCommand(id: string, extension: string, show: (uri: vscode.Uri) => void): vscode.Disposable {
+    return vscode.commands.registerCommand(id, (uri?: vscode.Uri) => {
+        const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+        if (!target || !target.fsPath.endsWith(extension)) {
+            vscode.window.showWarningMessage(`D365: Select a *${extension} file to preview.`);
+            return;
+        }
+        show(target);
+    });
 }
 
 export function deactivate() { }
