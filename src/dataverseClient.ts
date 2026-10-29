@@ -22,6 +22,31 @@ interface EntityDefinitionResponse {
     ObjectTypeCode: number | null;
 }
 
+interface SavedQueryResponse {
+    savedqueryid: string;
+    name: string;
+    returnedtypecode: string;
+    querytype: number;
+    isdefault?: boolean;
+    fetchxml: string;
+    layoutxml?: string | null;
+}
+
+interface RelationshipResponse {
+    '@odata.type'?: string;
+    SchemaName: string;
+    /** 0 = one-to-many, 1 = many-to-many. */
+    RelationshipType?: number | string;
+    ReferencedEntity?: string;
+    ReferencingEntity?: string;
+    ReferencingAttribute?: string;
+    IntersectEntityName?: string;
+    Entity1LogicalName?: string;
+    Entity1IntersectAttribute?: string;
+    Entity2LogicalName?: string;
+    Entity2IntersectAttribute?: string;
+}
+
 interface AttributeDefinitionResponse {
     LogicalName: string;
     SchemaName: string;
@@ -90,9 +115,48 @@ export interface OptionValue {
     label: string;
 }
 
+/** A system view (`savedquery` row), as needed to render a subgrid's columns. */
+export interface SavedQueryDefinition {
+    savedQueryId: string;
+    name: string;
+    /** Logical name of the table the view is on. */
+    entity: string;
+    /** Numeric `querytype`: 0 = public view, 2 = associated (subgrid) view, 64 = lookup view, … */
+    queryType: number;
+    isDefault: boolean;
+    fetchXml: string;
+    layoutXml?: string;
+}
+
+/** Primary id / primary name attribute logical names of a table. */
+export interface PrimaryAttributeNames {
+    id: string;
+    name: string;
+}
+
+/** A relationship as needed to filter a subgrid to one record's related rows. */
+export type RelationshipDefinition =
+    | { kind: 'OneToMany'; schemaName: string; referencedEntity: string; referencingEntity: string; referencingAttribute: string }
+    | {
+        kind: 'ManyToMany';
+        schemaName: string;
+        intersectEntity: string;
+        entity1: string;
+        entity1IntersectAttribute: string;
+        entity2: string;
+        entity2IntersectAttribute: string;
+    };
+
 // ── Client ──────────────────────────────────────────────────────────────────
 
 export class DataverseClient {
+    /** `<environmentUrl>|<entity>` → entity set name; metadata that never changes within an environment. */
+    private readonly entitySetNames = new Map<string, string>();
+    /** `<environmentUrl>|<entity>` → primary id / name attributes. */
+    private readonly primaryAttributes = new Map<string, PrimaryAttributeNames>();
+    /** `<environmentUrl>|<schema name>` → relationship (undefined = not found). */
+    private readonly relationships = new Map<string, RelationshipDefinition | undefined>();
+
     constructor(private readonly connectionManager: ConnectionManager) {}
 
     async getEntities(): Promise<EntityDefinition[]> {
@@ -130,6 +194,149 @@ export class DataverseClient {
                 isPrimaryName: a.IsPrimaryName,
             }))
             .sort((a, b) => a.logicalName.localeCompare(b.logicalName));
+    }
+
+    /** Fetches one system view by id (a form subgrid's `ViewId`). Resolves `undefined` if no such view exists. */
+    async getSavedQuery(savedQueryId: string): Promise<SavedQueryDefinition | undefined> {
+        const id = savedQueryId.replace(/[{}]/g, '');
+        const url = this.apiUrl(
+            `savedqueries(${id})`,
+            '$select=savedqueryid,name,returnedtypecode,querytype,isdefault,fetchxml,layoutxml',
+        );
+        let row: SavedQueryResponse | undefined;
+        try {
+            row = await this.request<SavedQueryResponse>(url);
+        } catch (err) {
+            if (err instanceof Error && /Dataverse API error 404/.test(err.message)) { return undefined; }
+            throw err;
+        }
+        if (!row) { return undefined; }
+        return {
+            savedQueryId: row.savedqueryid,
+            name: row.name,
+            entity: row.returnedtypecode,
+            queryType: row.querytype,
+            isDefault: row.isdefault === true,
+            fetchXml: row.fetchxml,
+            layoutXml: row.layoutxml || undefined,
+        };
+    }
+
+    /** The table's display name, e.g. `Manager` for `tn_manager`. Falls back to the logical name if it has no label. */
+    async getEntityDisplayName(entityLogicalName: string): Promise<string> {
+        const url = this.apiUrl(`EntityDefinitions(LogicalName='${entityLogicalName}')`, '$select=LogicalName,DisplayName');
+        const row = await this.request<{ LogicalName: string; DisplayName?: DataverseLabel }>(url);
+        return extractLabel(row?.DisplayName) || entityLogicalName;
+    }
+
+    /** The table's Web API collection name, e.g. `contacts` for `contact`. Cached per environment. */
+    async getEntitySetName(entityLogicalName: string): Promise<string> {
+        const key = `${this.connectionManager.connection!.environmentUrl}|${entityLogicalName}`;
+        const cached = this.entitySetNames.get(key);
+        if (cached) { return cached; }
+        const url = this.apiUrl(`EntityDefinitions(LogicalName='${entityLogicalName}')`, '$select=EntitySetName');
+        const row = await this.request<{ EntitySetName?: string }>(url);
+        if (!row?.EntitySetName) { throw new Error(`Table ${entityLogicalName} has no Web API entity set.`); }
+        this.entitySetNames.set(key, row.EntitySetName);
+        return row.EntitySetName;
+    }
+
+    /** The table's primary id and primary name attributes, e.g. `contactid` / `fullname`. Cached per environment. */
+    async getPrimaryAttributes(entityLogicalName: string): Promise<PrimaryAttributeNames> {
+        const key = `${this.connectionManager.connection!.environmentUrl}|${entityLogicalName}`;
+        const cached = this.primaryAttributes.get(key);
+        if (cached) { return cached; }
+        const url = this.apiUrl(`EntityDefinitions(LogicalName='${entityLogicalName}')`, '$select=PrimaryIdAttribute,PrimaryNameAttribute');
+        const row = await this.request<{ PrimaryIdAttribute?: string | null; PrimaryNameAttribute?: string | null }>(url);
+        if (!row?.PrimaryIdAttribute) { throw new Error(`Table ${entityLogicalName} has no primary id attribute.`); }
+        // A few system tables (intersect tables) have no primary name; fall back to the id so a title still shows.
+        const result = { id: row.PrimaryIdAttribute, name: row.PrimaryNameAttribute || row.PrimaryIdAttribute };
+        this.primaryAttributes.set(key, result);
+        return result;
+    }
+
+    /**
+     * A relationship by schema name (a subgrid's `RelationshipName`), one-to-many or many-to-many. Resolves `undefined`
+     * when no such relationship exists. Cached per environment.
+     */
+    async getRelationship(schemaName: string): Promise<RelationshipDefinition | undefined> {
+        const key = `${this.connectionManager.connection!.environmentUrl}|${schemaName}`;
+        if (this.relationships.has(key)) { return this.relationships.get(key); }
+        const url = this.apiUrl(`RelationshipDefinitions(SchemaName='${schemaName.replace(/'/g, "''")}')`);
+        let row: RelationshipResponse | undefined;
+        try {
+            row = await this.request<RelationshipResponse>(url);
+        } catch (err) {
+            if (!(err instanceof Error && /Dataverse API error 404/.test(err.message))) { throw err; }
+        }
+        let result: RelationshipDefinition | undefined;
+        const manyToMany = row && (/ManyToMany/.test(row['@odata.type'] ?? '')
+            || /ManyToMany|^1$/.test(String(row.RelationshipType ?? '')) || row.IntersectEntityName !== undefined);
+        if (row && manyToMany) {
+            result = {
+                kind: 'ManyToMany',
+                schemaName: row.SchemaName,
+                intersectEntity: row.IntersectEntityName ?? '',
+                entity1: row.Entity1LogicalName ?? '',
+                entity1IntersectAttribute: row.Entity1IntersectAttribute ?? '',
+                entity2: row.Entity2LogicalName ?? '',
+                entity2IntersectAttribute: row.Entity2IntersectAttribute ?? '',
+            };
+        } else if (row) {
+            result = {
+                kind: 'OneToMany',
+                schemaName: row.SchemaName,
+                referencedEntity: row.ReferencedEntity ?? '',
+                referencingEntity: row.ReferencingEntity ?? '',
+                referencingAttribute: row.ReferencingAttribute ?? '',
+            };
+        }
+        this.relationships.set(key, result);
+        return result;
+    }
+
+    /** The table's default system view of one `querytype` (4 = Quick Find, 64 = Lookup), else any view of that type. */
+    async getViewByQueryType(entityLogicalName: string, queryType: number): Promise<SavedQueryDefinition | undefined> {
+        const url = this.apiUrl(
+            'savedqueries',
+            '$select=savedqueryid,name,returnedtypecode,querytype,isdefault,fetchxml,layoutxml',
+            `$filter=returnedtypecode eq '${entityLogicalName.replace(/'/g, "''")}' and querytype eq ${Math.floor(queryType)}`,
+        );
+        const data = await this.request<ODataResponse<SavedQueryResponse>>(url);
+        const rows = data?.value ?? [];
+        const row = rows.find(r => r.isdefault === true) ?? rows[0];
+        if (!row) { return undefined; }
+        return {
+            savedQueryId: row.savedqueryid,
+            name: row.name,
+            entity: row.returnedtypecode,
+            queryType: row.querytype,
+            isDefault: row.isdefault === true,
+            fetchXml: row.fetchxml,
+            layoutXml: row.layoutxml || undefined,
+        };
+    }
+
+    /**
+     * Runs a FetchXML query and returns the first page of records (at most `maxRows`, never more than one request),
+     * with all annotations (formatted values, and lookup logical names for polymorphic lookups). Any paging in the FetchXML is replaced so the limit always holds.
+     */
+    async executeFetchXml(entityLogicalName: string, fetchXml: string, maxRows = 50): Promise<Array<Record<string, unknown>>> {
+        const entitySet = await this.getEntitySetName(entityLogicalName);
+        const url = this.apiUrl(entitySet, `fetchXml=${encodeURIComponent(limitFetchXml(fetchXml, maxRows))}`);
+        const token = await this.connectionManager.getAccessToken();
+        const response = await fetch(url, {
+            headers: {
+                ...this.headers(token),
+                Prefer: 'odata.include-annotations="*"',
+            },
+        });
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`Dataverse API error ${response.status}: ${body || response.statusText}`);
+        }
+        const page = await response.json() as ODataResponse<Record<string, unknown>>;
+        return (page.value ?? []).slice(0, maxRows);
     }
 
     async getSolutions(): Promise<Solution[]> {
@@ -352,6 +559,19 @@ export class DataverseClient {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Caps a FetchXML query at `maxRows`: drops `page`/`paging-cookie`, keeps a smaller `top`, otherwise replaces
+ * `top`/`count` with `count="<maxRows>"` (FetchXML rejects `top` together with `count`).
+ */
+export function limitFetchXml(fetchXml: string, maxRows: number): string {
+    return fetchXml.replace(/<fetch\b([^>]*?)(\/?)>/, (_match, attrs: string, selfClosing: string) => {
+        const top = Number(/\btop\s*=\s*["'](\d+)["']/.exec(attrs)?.[1]);
+        let kept = attrs.replace(/\s+(page|paging-cookie|count|top)\s*=\s*("[^"]*"|'[^']*')/g, '');
+        kept += Number.isFinite(top) && top > 0 && top <= maxRows ? ` top="${top}"` : ` count="${maxRows}"`;
+        return `<fetch${kept}${selfClosing}>`;
+    });
+}
 
 function extractLabel(label: DataverseLabel | undefined): string {
     if (!label) { return ''; }

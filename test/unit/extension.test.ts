@@ -65,6 +65,7 @@ describe('extension.activate', () => {
             'd365.refreshEntities', 'd365.browseEntity', 'd365.generateInterface',
             'd365.publishWebResource', 'd365.publishWebResources', 'd365.configureWebResources',
             'd365.compareWebResource', 'd365.configureMcp', 'd365.codeAction.insertInterface',
+            'd365.previewForm', 'd365.previewView', 'd365.previewFormInNewWindow', 'd365.previewViewInNewWindow',
         ];
         for (const cmd of expectedCommands) {
             assert.ok(handlers.has(cmd), `expected command '${cmd}' to be registered`);

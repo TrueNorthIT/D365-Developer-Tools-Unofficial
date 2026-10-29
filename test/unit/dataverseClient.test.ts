@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
-import { DataverseClient } from '../../src/dataverseClient';
+import { DataverseClient, limitFetchXml } from '../../src/dataverseClient';
 import type { ConnectionManager } from '../../src/connectionManager';
 
 const ENV_URL = 'https://contoso.crm.dynamics.com';
@@ -239,6 +239,105 @@ describe('DataverseClient', () => {
     });
 
     // ── getSolutions ─────────────────────────────────────────────────────
+
+    // ── getSavedQuery / getEntityDisplayName ─────────────────────────────
+
+    describe('getSavedQuery', () => {
+        const ID = '801a405f-eb04-ec11-b6e6-000d3a86bc77';
+
+        it('requests the view by id (braces stripped) and maps the row', async () => {
+            fetchStub.resolves(fakeResponse({
+                text: async () => JSON.stringify({
+                    savedqueryid: ID, name: 'Active Contacts', returnedtypecode: 'contact', querytype: 2,
+                    isdefault: false, fetchxml: '<fetch/>', layoutxml: '<grid/>',
+                }),
+            }));
+            const q = await new DataverseClient(fakeConnectionManager()).getSavedQuery(`{${ID.toUpperCase()}}`);
+
+            const [url] = fetchStub.firstCall.args;
+            assert.ok(url.startsWith(`${ENV_URL}/api/data/v9.2/savedqueries(${ID.toUpperCase()})?$select=`), url);
+            assert.ok(url.includes('fetchxml') && url.includes('layoutxml') && url.includes('returnedtypecode'));
+            assert.deepStrictEqual(q, {
+                savedQueryId: ID, name: 'Active Contacts', entity: 'contact', queryType: 2,
+                isDefault: false, fetchXml: '<fetch/>', layoutXml: '<grid/>',
+            });
+        });
+
+        it('resolves undefined when the view does not exist (404)', async () => {
+            fetchStub.resolves(fakeResponse({ ok: false, status: 404, statusText: 'Not Found', text: async () => 'no such view' }));
+            assert.strictEqual(await new DataverseClient(fakeConnectionManager()).getSavedQuery(ID), undefined);
+        });
+
+        it('rethrows other API errors (e.g. 403) so callers can tell "forbidden" from "missing"', async () => {
+            fetchStub.resolves(fakeResponse({ ok: false, status: 403, statusText: 'Forbidden', text: async () => 'denied' }));
+            await assert.rejects(new DataverseClient(fakeConnectionManager()).getSavedQuery(ID), /403/);
+        });
+    });
+
+    describe('getEntityDisplayName', () => {
+        it('returns the localized display name', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ LogicalName: 'tn_manager', DisplayName: label('Manager') }) }));
+            const name = await new DataverseClient(fakeConnectionManager()).getEntityDisplayName('tn_manager');
+            assert.strictEqual(name, 'Manager');
+            assert.ok(fetchStub.firstCall.args[0].includes("EntityDefinitions(LogicalName='tn_manager')"));
+        });
+
+        it('falls back to the logical name when the table has no label', async () => {
+            fetchStub.resolves(fakeResponse({ text: async () => JSON.stringify({ LogicalName: 'tn_manager', DisplayName: label(undefined) }) }));
+            assert.strictEqual(await new DataverseClient(fakeConnectionManager()).getEntityDisplayName('tn_manager'), 'tn_manager');
+        });
+    });
+
+    // ── executeFetchXml ──────────────────────────────────────────────────
+
+    describe('executeFetchXml', () => {
+        const FETCH = '<fetch version="1.0" page="3" paging-cookie="x"><entity name="contact"><attribute name="fullname"/></entity></fetch>';
+
+        it('resolves the entity set, runs the FetchXML capped at 50 rows with formatted values, and does not page further', async () => {
+            fetchStub.onFirstCall().resolves(fakeResponse({ text: async () => JSON.stringify({ EntitySetName: 'contacts' }) }));
+            fetchStub.onSecondCall().resolves(fakeResponse({
+                json: async () => ({ value: [{ fullname: 'Ann' }], '@odata.nextLink': `${ENV_URL}/api/data/v9.2/contacts?page=2` }),
+            }));
+            const rows = await new DataverseClient(fakeConnectionManager()).executeFetchXml('contact', FETCH);
+
+            assert.ok(fetchStub.firstCall.args[0].includes("EntityDefinitions(LogicalName='contact')?$select=EntitySetName"));
+            const [url, init] = fetchStub.secondCall.args;
+            assert.ok(url.startsWith(`${ENV_URL}/api/data/v9.2/contacts?fetchXml=`), url);
+            const sent = decodeURIComponent(url.slice(url.indexOf('fetchXml=') + 'fetchXml='.length));
+            assert.ok(sent.includes('count="50"'), sent);
+            assert.ok(!/page=|paging-cookie=/.test(sent), sent);
+            assert.strictEqual(init.headers.Authorization, `Bearer ${TOKEN}`);
+            assert.strictEqual(init.headers.Prefer, 'odata.include-annotations="*"');
+            assert.deepStrictEqual(rows, [{ fullname: 'Ann' }]);
+            assert.strictEqual(fetchStub.callCount, 2, 'Expected no request for the next page');
+        });
+
+        it('caches the entity set name per environment', async () => {
+            fetchStub.onFirstCall().resolves(fakeResponse({ text: async () => JSON.stringify({ EntitySetName: 'contacts' }) }));
+            fetchStub.resolves(fakeResponse({ json: async () => ({ value: [] }) }));
+            const client = new DataverseClient(fakeConnectionManager());
+            await client.executeFetchXml('contact', FETCH);
+            await client.executeFetchXml('contact', FETCH);
+            assert.strictEqual(fetchStub.callCount, 3, 'Expected one metadata request and two queries');
+        });
+
+        it('rejects with the Dataverse error body on a failed query', async () => {
+            fetchStub.onFirstCall().resolves(fakeResponse({ text: async () => JSON.stringify({ EntitySetName: 'contacts' }) }));
+            fetchStub.onSecondCall().resolves(fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', text: async () => '{"error":{"message":"bad attr"}}' }));
+            await assert.rejects(new DataverseClient(fakeConnectionManager()).executeFetchXml('contact', FETCH), /400.*bad attr/);
+        });
+    });
+
+    describe('limitFetchXml', () => {
+        it('replaces count and top above the limit with count="50"', () => {
+            assert.strictEqual(limitFetchXml('<fetch count="500" mapping="logical"><entity/></fetch>', 50), '<fetch mapping="logical" count="50"><entity/></fetch>');
+            assert.strictEqual(limitFetchXml('<fetch top="100"><entity/></fetch>', 50), '<fetch count="50"><entity/></fetch>');
+        });
+
+        it('keeps a smaller top (FetchXML does not allow top with count)', () => {
+            assert.strictEqual(limitFetchXml('<fetch top="10"><entity/></fetch>', 50), '<fetch top="10"><entity/></fetch>');
+        });
+    });
 
     describe('getSolutions', () => {
         it('requests only visible solutions and maps fields', async () => {
